@@ -7,8 +7,6 @@ A lightweight MVP for **QROO Workspace** where each desk has a QR code. Scanning
 - add hours (100 EGP/hr)
 - add cafe items (coffee/tea/pastry)
 - apply the rule: **1 free coffee per paid hour**
-- show a **day-view availability grid** before booking
-- require agreement to a **basic laptop usage policy** before starting/booking
 
 > Implementation note: the database model is still named `Table` / `Order` from the original template, but the UI and API expose them as **Desks** and **Sessions**.
 
@@ -98,18 +96,6 @@ Running `npm run seed` (backend) will create:
 - Guest / customer: scan a desk QR → open `/d/<deskId>` → set hours + add-ons → **Check in**
 - Owner/staff: `/login` → `/owner/*` dashboard
 - bookings: `/owner/bookings` (owner creates and manages future desk slots)
-
----
-
-## Laptop usage policy
-
-The guest check-in page requires users to tick a checkbox to accept the **Basic laptop usage policy (v1)** before starting or booking a session.
-
----
-
-## Availability grid
-
-Both the guest desk page and the owner bookings page show a simple **hour-by-hour day view** of availability for that desk.
 
 
 ---
