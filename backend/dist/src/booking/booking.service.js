@@ -13,6 +13,7 @@ exports.BookingService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma.service");
 const client_1 = require("@prisma/client");
+const sms_service_1 = require("../sms/sms.service");
 function toDate(iso) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime()))
@@ -33,8 +34,9 @@ function validateRange(startAt, endAt) {
     }
 }
 let BookingService = class BookingService {
-    constructor(prisma) {
+    constructor(prisma, sms) {
         this.prisma = prisma;
+        this.sms = sms;
     }
     async ensureDesk(tableId) {
         const desk = await this.prisma.table.findFirst({ where: { id: tableId, deleted: false } });
@@ -86,7 +88,7 @@ let BookingService = class BookingService {
         const endAt = toDate(dto.endAt);
         validateRange(startAt, endAt);
         await this.ensureNoOverlap(tenantId, desk.id, startAt, endAt);
-        return this.prisma.booking.create({
+        const created = await this.prisma.booking.create({
             data: {
                 tenantId,
                 tableId: desk.id,
@@ -95,21 +97,26 @@ let BookingService = class BookingService {
                 status: client_1.BookingStatus.RESERVED,
                 customerName: dto.customerName,
                 customerPhone: dto.customerPhone,
+                customerNationalIdPath: dto.customerNationalIdPath,
                 notes: dto.notes,
                 createdByUserId,
             },
             include: { table: true },
         });
+        void this.sms.sendToAdmin(`📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`);
+        return created;
     }
     async cancelForTenant(tenantId, id) {
         const existing = await this.prisma.booking.findFirst({ where: { id, tenantId, deleted: false } });
         if (!existing)
             throw new common_1.NotFoundException('Booking not found');
-        return this.prisma.booking.update({
+        const updated = await this.prisma.booking.update({
             where: { id },
             data: { status: client_1.BookingStatus.CANCELLED },
             include: { table: true },
         });
+        void this.sms.sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`);
+        return updated;
     }
     async listForDeskPublic(deskId, from, to) {
         const desk = await this.ensureDesk(deskId);
@@ -139,7 +146,7 @@ let BookingService = class BookingService {
         const endAt = toDate(dto.endAt);
         validateRange(startAt, endAt);
         await this.ensureNoOverlap(desk.tenantId, desk.id, startAt, endAt);
-        return this.prisma.booking.create({
+        const created = await this.prisma.booking.create({
             data: {
                 tenantId: desk.tenantId,
                 tableId: desk.id,
@@ -148,6 +155,7 @@ let BookingService = class BookingService {
                 status: client_1.BookingStatus.RESERVED,
                 customerName: dto.customerName,
                 customerPhone: dto.customerPhone,
+                customerNationalIdPath: dto.customerNationalIdPath,
                 notes: dto.notes,
                 createdByUserId: null,
             },
@@ -158,11 +166,14 @@ let BookingService = class BookingService {
                 status: true,
             },
         });
+        void this.sms.sendToAdmin(`📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`);
+        return created;
     }
 };
 exports.BookingService = BookingService;
 exports.BookingService = BookingService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        sms_service_1.SmsService])
 ], BookingService);
 //# sourceMappingURL=booking.service.js.map

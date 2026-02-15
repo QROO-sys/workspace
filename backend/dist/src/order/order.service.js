@@ -13,14 +13,16 @@ exports.OrderService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma.service");
 const client_1 = require("@prisma/client");
+const sms_service_1 = require("../sms/sms.service");
 function norm(s) {
     return (s || '').trim().toLowerCase();
 }
 const SKU_EXTRA_HOUR = '001';
 const SKU_COFFEE = '002';
 let OrderService = class OrderService {
-    constructor(prisma) {
+    constructor(prisma, sms) {
         this.prisma = prisma;
+        this.sms = sms;
     }
     async listForTenant(tenantId) {
         return this.prisma.order.findMany({
@@ -48,7 +50,7 @@ let OrderService = class OrderService {
         if (!table)
             throw new common_1.NotFoundException('Desk not found');
         const tenantId = table.tenantId;
-        return this.createOrderInternal(table.id, tenantId, dto);
+        return this.createOrderInternal(table.id, tenantId, dto, 'GUEST');
     }
     async createOwnerOrder(tenantId, dto) {
         const table = await this.prisma.table.findFirst({
@@ -56,7 +58,7 @@ let OrderService = class OrderService {
         });
         if (!table)
             throw new common_1.NotFoundException('Desk not found');
-        return this.createOrderInternal(table.id, tenantId, dto);
+        return this.createOrderInternal(table.id, tenantId, dto, 'STAFF');
     }
     async upcomingForTenant(tenantId) {
         const now = new Date();
@@ -71,7 +73,7 @@ let OrderService = class OrderService {
             include: { table: true, orderItems: { include: { menuItem: true } } },
         });
     }
-    async createOrderInternal(tableId, tenantId, dto) {
+    async createOrderInternal(tableId, tenantId, dto, source) {
         const items = (dto.items || []).filter(i => i.quantity > 0);
         if (items.length === 0)
             throw new common_1.BadRequestException('No items');
@@ -96,6 +98,12 @@ let OrderService = class OrderService {
         if (hoursQty <= 0) {
             throw new common_1.BadRequestException('You must add at least 1 hour (Extra hour)');
         }
+        const table = await this.prisma.table.findFirst({
+            where: { id: tableId, tenantId, deleted: false },
+            select: { id: true, name: true, hourlyRate: true },
+        });
+        if (!table)
+            throw new common_1.NotFoundException('Desk not found');
         const now = new Date();
         let startAt = now;
         if (dto.startAt) {
@@ -129,13 +137,14 @@ let OrderService = class OrderService {
         for (const it of items) {
             const mi = byId.get(it.menuItemId);
             const isCoffee = mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee';
+            const isExtraHour = mi.sku === SKU_EXTRA_HOUR || norm(mi.name) === 'extra hour';
             if (isCoffee) {
                 continue;
             }
             orderItemsData.push({
                 menuItemId: mi.id,
                 quantity: it.quantity,
-                price: mi.price,
+                price: isExtraHour ? table.hourlyRate : mi.price,
             });
         }
         const coffeeMi = menuItems.find(mi => mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee');
@@ -165,6 +174,7 @@ let OrderService = class OrderService {
                 status: isFutureBooking ? client_1.OrderStatus.CONFIRMED : client_1.OrderStatus.PENDING,
                 customerName: dto.customerName,
                 customerPhone: dto.customerPhone,
+                customerNationalIdPath: dto.customerNationalIdPath,
                 startAt,
                 endAt,
                 orderItems: {
@@ -173,6 +183,23 @@ let OrderService = class OrderService {
             },
             include: { table: true, orderItems: { include: { menuItem: true } } },
         });
+        void this.sms.sendToAdmin(`🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`);
+        if (source === 'GUEST') {
+            const summary = order.orderItems
+                .map((oi) => `${oi.quantity}x ${oi.menuItem?.name ?? 'Item'}`)
+                .join(', ');
+            await this.prisma.tableRequest
+                .create({
+                data: {
+                    tenantId,
+                    tableId,
+                    requestType: client_1.RequestType.OTHER,
+                    message: `New guest order: ${summary || 'Order'} (Total ${order.total} EGP)`,
+                    isActive: true,
+                },
+            })
+                .catch(() => void 0);
+        }
         return order;
     }
     async updateStatus(id, tenantId, status) {
@@ -183,6 +210,7 @@ let OrderService = class OrderService {
 exports.OrderService = OrderService;
 exports.OrderService = OrderService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        sms_service_1.SmsService])
 ], OrderService);
 //# sourceMappingURL=order.service.js.map

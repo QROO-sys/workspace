@@ -16,6 +16,12 @@ const menu_item_module_1 = require("./menu-item/menu-item.module");
 const table_module_1 = require("./table/table.module");
 const order_module_1 = require("./order/order.module");
 const public_module_1 = require("./public/public.module");
+const booking_module_1 = require("./booking/booking.module");
+const table_request_module_1 = require("./table-request/table-request.module");
+const analytics_module_1 = require("./analytics/analytics.module");
+const users_module_1 = require("./users/users.module");
+const sms_module_1 = require("./sms/sms.module");
+const uploads_module_1 = require("./uploads/uploads.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -33,6 +39,12 @@ exports.AppModule = AppModule = __decorate([
             table_module_1.TableModule,
             order_module_1.OrderModule,
             public_module_1.PublicModule,
+            booking_module_1.BookingModule,
+            table_request_module_1.TableRequestModule,
+            analytics_module_1.AnalyticsModule,
+            users_module_1.UsersModule,
+            sms_module_1.SmsModule,
+            uploads_module_1.UploadsModule,
         ],
         providers: [prisma_service_1.PrismaService],
     })

@@ -11,8 +11,8 @@ const common_1 = require("@nestjs/common");
 let OwnerGuard = class OwnerGuard {
     canActivate(context) {
         const req = context.switchToHttp().getRequest();
-        if (!req.user || req.user.role !== 'OWNER') {
-            throw new common_1.ForbiddenException('Only OWNER can perform this action');
+        if (!req.user || !['OWNER', 'MANAGER'].includes(req.user.role)) {
+            throw new common_1.ForbiddenException('Only OWNER/MANAGER can perform this action');
         }
         return true;
     }

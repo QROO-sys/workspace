@@ -40,5 +40,10 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
+], CreateBookingDto.prototype, "customerNationalIdPath", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
 ], CreateBookingDto.prototype, "notes", void 0);
 //# sourceMappingURL=create-booking.dto.js.map

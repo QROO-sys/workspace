@@ -32,15 +32,18 @@ __decorate([
     __metadata("design:type", String)
 ], CreateGuestOrderDto.prototype, "tableId", void 0);
 __decorate([
-    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateGuestOrderDto.prototype, "customerName", void 0);
 __decorate([
-    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateGuestOrderDto.prototype, "customerPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateGuestOrderDto.prototype, "customerNationalIdPath", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsISO8601)(),

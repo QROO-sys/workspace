@@ -28,7 +28,13 @@ let TableService = class TableService {
     async create(dto, tenantId) {
         const base = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
         const created = await this.prisma.table.create({
-            data: { name: dto.name, qrUrl: dto.qrUrl || `${base}/d/pending`, laptopSerial: dto.laptopSerial, tenantId }
+            data: {
+                name: dto.name,
+                qrUrl: dto.qrUrl || `${base}/d/pending`,
+                laptopSerial: dto.laptopSerial,
+                hourlyRate: dto.hourlyRate ?? 100,
+                tenantId,
+            }
         });
         const qrUrl = dto.qrUrl || `${base}/d/${created.id}`;
         return this.prisma.table.update({ where: { id: created.id }, data: { qrUrl } });
