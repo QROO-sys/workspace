@@ -42,4 +42,3 @@ export class UploadsController {
     return { ok: true, path: `/uploads/${file.filename}` };
   }
 }
-EOF
