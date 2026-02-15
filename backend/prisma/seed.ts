@@ -8,6 +8,10 @@ async function main() {
   const tenantName = process.env.SEED_TENANT_NAME || 'QROO Workspace';
   const ownerEmail = process.env.SEED_OWNER_EMAIL || 'owner@qroo.local';
   const ownerPass  = process.env.SEED_OWNER_PASSWORD || 'ChangeMe123!';
+  const managerEmail = process.env.SEED_MANAGER_EMAIL || 'manager@qroo.local';
+  const managerPass  = process.env.SEED_MANAGER_PASSWORD || 'ChangeMe123!';
+  const staffEmail = process.env.SEED_STAFF_EMAIL || 'staff@qroo.local';
+  const staffPass  = process.env.SEED_STAFF_PASSWORD || 'ChangeMe123!';
   const frontendBase = process.env.SEED_FRONTEND_BASE_URL || 'http://localhost:3000';
 
   let tenant = await prisma.tenant.findFirst({ where: { name: tenantName, deleted: false } });
@@ -29,6 +33,21 @@ async function main() {
     });
   }
 
+  // Seed a manager + staff user for permission tiering
+  const ensureUser = async (email: string, pass: string, role: Role, name: string) => {
+    let u = await prisma.user.findUnique({ where: { email } });
+    if (!u) {
+      const hashed = await bcrypt.hash(pass, 10);
+      u = await prisma.user.create({
+        data: { email, password: hashed, name, role, tenantId: tenant.id }
+      });
+    }
+    return u;
+  };
+
+  const manager = await ensureUser(managerEmail, managerPass, Role.MANAGER, 'Manager');
+  const staff = await ensureUser(staffEmail, staffPass, Role.STAFF, 'Staff');
+
   // Seed 10 desks as Tables (with 1 laptop per desk; placeholder serials)
 const existing = await prisma.table.count({ where: { tenantId: tenant.id, deleted: false } });
 if (existing < 10) {
@@ -43,6 +62,7 @@ if (existing < 10) {
           name,
           tenantId: tenant.id,
           laptopSerial,
+          hourlyRate: 100,
           qrUrl: `${frontendBase}/d/pending`
         }
       });
@@ -100,7 +120,9 @@ for (const it of items) {
 
   console.log('Seed complete.');
   console.log(`Tenant: ${tenant.id} (${tenant.name})`);
-  console.log(`Owner: ${owner.email} / ${ownerPass}`);
+  console.log(`Owner:   ${owner.email} / ${ownerPass}`);
+  console.log(`Manager: ${manager.email} / ${managerPass}`);
+  console.log(`Staff:   ${staff.email} / ${staffPass}`);
 }
 
 main()

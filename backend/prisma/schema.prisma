@@ -38,6 +38,7 @@ model User {
 
 enum Role {
   OWNER
+  MANAGER
   STAFF
 }
 
@@ -46,6 +47,8 @@ model Table {
   name        String
   qrUrl       String
   laptopSerial String?
+  // Hourly desk rate (EGP). Used to price "Extra hour" lines per-desk.
+  hourlyRate  Float    @default(100)
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   tenantId    String
   orders      Order[]
@@ -98,6 +101,7 @@ model Order {
   // Workspace usage metadata (optional)
   customerName  String?
   customerPhone String?
+  customerNationalIdPath String?
 
   // Booking / time-slot metadata
   startAt       DateTime    @default(now())
@@ -169,6 +173,7 @@ model Booking {
   endAt           DateTime
   customerName    String?
   customerPhone   String?
+  customerNationalIdPath String?
   notes           String?
   createdByUser   User?         @relation(fields: [createdByUserId], references: [id])
   createdByUserId String?
