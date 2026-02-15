@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id            String         @id @default(uuid())
+  name          String
+  users         User[]
+  tables        Table[]
+  menuCategories MenuCategory[]
+  menuItems     MenuItem[]
+  orders        Order[]
+  tableRequests TableRequest[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deleted       Boolean        @default(false)
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String
+  name        String?
+  role        Role
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deleted     Boolean  @default(false)
+}
+
+enum Role {
+  OWNER
+  STAFF
+}
+
+model Table {
+  id          String   @id @default(uuid())
+  name        String
+  qrUrl       String
+  laptopSerial String?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  orders      Order[]
+  tableRequests TableRequest[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deleted     Boolean  @default(false)
+}
+
+model MenuCategory {
+  id          String   @id @default(uuid())
+  name        String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  menuItems   MenuItem[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deleted     Boolean  @default(false)
+}
+
+model MenuItem {
+  id          String   @id @default(uuid())
+  name        String
+  sku         String
+  description String?
+  price       Float
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  category    MenuCategory @relation(fields: [categoryId], references: [id])
+  categoryId  String
+  orderItems  OrderItem[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deleted     Boolean  @default(false)
+
+  @@unique([tenantId, sku])
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  table         Table       @relation(fields: [tableId], references: [id])
+  tableId       String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
+  tenantId      String
+  orderItems    OrderItem[]
+  total         Float
+  status        OrderStatus @default(PENDING)
+
+  // Workspace usage metadata (optional)
+  customerName  String?
+  customerPhone String?
+
+  // Booking / time-slot metadata
+  startAt       DateTime    @default(now())
+  endAt         DateTime?
+
+  // Laptop usage policy acknowledgement
+  laptopPolicyAccepted   Boolean   @default(false)
+  laptopPolicyAcceptedAt DateTime?
+  laptopPolicyVersion    String?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deleted       Boolean     @default(false)
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  SERVED
+  COMPLETED
+  CANCELLED
+}
+
+model OrderItem {
+  id          String    @id @default(uuid())
+  order       Order     @relation(fields: [orderId], references: [id])
+  orderId     String
+  menuItem    MenuItem  @relation(fields: [menuItemId], references: [id])
+  menuItemId  String
+  quantity    Int       @default(1)
+  price       Float
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deleted     Boolean   @default(false)
+}
+
+model TableRequest {
+  id          String    @id @default(uuid())
+  table       Table     @relation(fields: [tableId], references: [id])
+  tableId     String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  requestType RequestType
+  message     String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deleted     Boolean   @default(false)
+}
+
+enum RequestType {
+  CALL_STAFF
+  WATER
+  BILL
+  OTHER
+}
