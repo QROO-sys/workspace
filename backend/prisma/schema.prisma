@@ -12,6 +12,7 @@ model Tenant {
   name          String
   users         User[]
   tables        Table[]
+  bookings Booking[]
   menuCategories MenuCategory[]
   menuItems     MenuItem[]
   orders        Order[]
@@ -27,6 +28,7 @@ model User {
   password    String
   name        String?
   role        Role
+  bookingsCreated Booking[]
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   tenantId    String
   createdAt   DateTime @default(now())
@@ -47,6 +49,7 @@ model Table {
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   tenantId    String
   orders      Order[]
+  bookings Booking[]
   tableRequests TableRequest[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -146,4 +149,32 @@ enum RequestType {
   WATER
   BILL
   OTHER
+}
+
+enum BookingStatus {
+  RESERVED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+}
+
+model Booking {
+  id              String        @id @default(uuid())
+  tenant          Tenant        @relation(fields: [tenantId], references: [id])
+  tenantId        String
+  table           Table         @relation(fields: [tableId], references: [id])
+  tableId         String
+  status          BookingStatus @default(RESERVED)
+  startAt         DateTime
+  endAt           DateTime
+  customerName    String?
+  customerPhone   String?
+  notes           String?
+  createdByUser   User?         @relation(fields: [createdByUserId], references: [id])
+  createdByUserId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deleted         Boolean       @default(false)
+
+  @@index([tenantId, tableId, startAt, endAt])
 }
