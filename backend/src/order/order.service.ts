@@ -69,6 +69,10 @@ export class OrderService {
   }
 
   private async createOrderInternal(tableId: string, tenantId: string, dto: CreateGuestOrderDto) {
+    if (dto.laptopPolicyAccepted !== true) {
+      throw new BadRequestException('Laptop usage policy must be accepted to start a session');
+    }
+
     const items = (dto.items || []).filter(i => i.quantity > 0);
     if (items.length === 0) throw new BadRequestException('No items');
 
@@ -177,6 +181,8 @@ export class OrderService {
 
     const isFutureBooking = startAt.getTime() > now.getTime() + 5 * 60 * 1000;
 
+    const policyVersion = (dto.laptopPolicyVersion || 'v1').trim() || 'v1';
+
     const order = await this.prisma.order.create({
       data: {
         tenantId,
@@ -187,6 +193,9 @@ export class OrderService {
         customerPhone: dto.customerPhone,
         startAt,
         endAt,
+        laptopPolicyAccepted: true,
+        laptopPolicyAcceptedAt: now,
+        laptopPolicyVersion: policyVersion,
         orderItems: {
           create: orderItemsData,
         },

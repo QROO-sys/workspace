@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested, IsISO8601 } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested, IsISO8601 } from 'class-validator';
 
 export class CreateOrderItemInput {
   @IsUUID()
@@ -26,6 +26,14 @@ export class CreateGuestOrderDto {
   @IsOptional()
   @IsISO8601()
   startAt?: string;
+
+  // Must be accepted when starting/booking a session.
+  @IsBoolean()
+  laptopPolicyAccepted!: boolean;
+
+  @IsOptional()
+  @IsString()
+  laptopPolicyVersion?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

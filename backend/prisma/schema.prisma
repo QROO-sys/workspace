@@ -100,6 +100,11 @@ model Order {
   startAt       DateTime    @default(now())
   endAt         DateTime?
 
+  // Laptop usage policy acknowledgement
+  laptopPolicyAccepted   Boolean   @default(false)
+  laptopPolicyAcceptedAt DateTime?
+  laptopPolicyVersion    String?
+
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   deleted       Boolean     @default(false)
