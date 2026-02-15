@@ -17,7 +17,7 @@ export class AuthController {
       secure: false,
       path: '/',
     });
-    return { ok: true };
+    return { ok: true, access_token: token.access_token };
   }
 
   @Post('login')
@@ -30,7 +30,7 @@ export class AuthController {
       secure: false,
       path: '/',
     });
-    return { ok: true };
+    return { ok: true, access_token: token.access_token };
   }
 
   @Post('logout')

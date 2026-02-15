@@ -1,4 +1,4 @@
-import { IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min } from 'class-validator';
 
 export class CreateTableDto {
   @IsString()
@@ -11,4 +11,9 @@ export class CreateTableDto {
   @IsOptional()
   @IsString()
   qrUrl?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  hourlyRate?: number;
 }

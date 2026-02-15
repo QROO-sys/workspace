@@ -14,13 +14,15 @@ export class CreateGuestOrderDto {
   @IsUUID()
   tableId!: string;
 
-  @IsOptional()
   @IsString()
-  customerName?: string;
+  customerName!: string;
+
+  @IsString()
+  customerPhone!: string;
 
   @IsOptional()
   @IsString()
-  customerPhone?: string;
+  customerNationalIdPath?: string;
 
   // Optional booking start time (ISO 8601). If omitted, starts now.
   @IsOptional()

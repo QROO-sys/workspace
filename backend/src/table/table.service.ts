@@ -21,7 +21,13 @@ export class TableService {
 
     // Create first, then lock the QR link to the actual deskId (stable and unique)
     const created = await this.prisma.table.create({
-      data: { name: dto.name, qrUrl: dto.qrUrl || `${base}/d/pending`, laptopSerial: dto.laptopSerial, tenantId }
+      data: {
+        name: dto.name,
+        qrUrl: dto.qrUrl || `${base}/d/pending`,
+        laptopSerial: dto.laptopSerial,
+        hourlyRate: dto.hourlyRate ?? 100,
+        tenantId,
+      }
     });
 
     const qrUrl = dto.qrUrl || `${base}/d/${created.id}`;

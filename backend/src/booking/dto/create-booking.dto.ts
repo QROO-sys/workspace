@@ -21,5 +21,9 @@ export class CreateBookingDto {
 
   @IsOptional()
   @IsString()
+  customerNationalIdPath?: string;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 }

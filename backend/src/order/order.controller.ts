@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OwnerGuard } from '../common/guards/owner.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Role } from '@prisma/client';
 import { OrderService } from './order.service';
 import { CreateGuestOrderDto, UpdateOrderStatusDto } from './dto';
 
@@ -24,7 +26,8 @@ export class OrderController {
 
   // Owner can create bookings / walk-in sessions
   @Post()
-  @UseGuards(JwtAuthGuard, OwnerGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OWNER, Role.MANAGER, Role.STAFF)
   async createOwner(@Body() dto: CreateGuestOrderDto, @Req() req: any) {
     return this.service.createOwnerOrder(req.user.tenantId, dto);
   }
@@ -43,7 +46,8 @@ export class OrderController {
   }
 
   @Patch(':id/status')
-  @UseGuards(JwtAuthGuard, OwnerGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OWNER, Role.MANAGER, Role.STAFF)
   async updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: any) {
     return this.service.updateStatus(id, req.user.tenantId, dto.status);
   }

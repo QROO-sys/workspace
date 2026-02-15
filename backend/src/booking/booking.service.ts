@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma.service';
 import { BookingStatus } from '@prisma/client';
 import { CreateBookingDto } from './dto';
+import { SmsService } from '../sms/sms.service';
 
 function toDate(iso: string): Date {
   const d = new Date(iso);
@@ -26,7 +27,10 @@ function validateRange(startAt: Date, endAt: Date) {
 
 @Injectable()
 export class BookingService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private sms: SmsService
+  ) {}
 
   private async ensureDesk(tableId: string) {
     const desk = await this.prisma.table.findFirst({ where: { id: tableId, deleted: false } });
@@ -88,7 +92,7 @@ export class BookingService {
 
     await this.ensureNoOverlap(tenantId, desk.id, startAt, endAt);
 
-    return this.prisma.booking.create({
+    const created = await this.prisma.booking.create({
       data: {
         tenantId,
         tableId: desk.id,
@@ -97,22 +101,33 @@ export class BookingService {
         status: BookingStatus.RESERVED,
         customerName: dto.customerName,
         customerPhone: dto.customerPhone,
+        customerNationalIdPath: dto.customerNationalIdPath,
         notes: dto.notes,
         createdByUserId,
       },
       include: { table: true },
     });
+
+    void this.sms.sendToAdmin(
+      `📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`
+    );
+
+    return created;
   }
 
   async cancelForTenant(tenantId: string, id: string) {
     const existing = await this.prisma.booking.findFirst({ where: { id, tenantId, deleted: false } });
     if (!existing) throw new NotFoundException('Booking not found');
 
-    return this.prisma.booking.update({
+    const updated = await this.prisma.booking.update({
       where: { id },
       data: { status: BookingStatus.CANCELLED },
       include: { table: true },
     });
+
+    void this.sms.sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`);
+
+    return updated;
   }
 
   // Public (guest) API
@@ -148,7 +163,7 @@ export class BookingService {
 
     await this.ensureNoOverlap(desk.tenantId, desk.id, startAt, endAt);
 
-    return this.prisma.booking.create({
+    const created = await this.prisma.booking.create({
       data: {
         tenantId: desk.tenantId,
         tableId: desk.id,
@@ -157,6 +172,7 @@ export class BookingService {
         status: BookingStatus.RESERVED,
         customerName: dto.customerName,
         customerPhone: dto.customerPhone,
+        customerNationalIdPath: dto.customerNationalIdPath,
         notes: dto.notes,
         createdByUserId: null,
       },
@@ -167,5 +183,11 @@ export class BookingService {
         status: true,
       },
     });
+
+    void this.sms.sendToAdmin(
+      `📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`
+    );
+
+    return created;
   }
 }
