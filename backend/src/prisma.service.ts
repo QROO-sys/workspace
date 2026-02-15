@@ -8,10 +8,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
   }
 
   async enableShutdownHooks(app: INestApplication) {
-    // Prisma's event types can be narrowed to `never` unless log events are enabled.
-    // This keeps shutdown hooks working without fighting Prisma's generics.
-    this.$on('beforeExit' as any, async () => {
-      await app.close();
-    });
+    // Prisma 5+ library engine does not support the 'beforeExit' hook.
+    // Use Node process events instead.
+    const shutdown = async () => {
+      try { await app.close(); } catch {}
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   }
+
 }

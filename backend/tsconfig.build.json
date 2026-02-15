@@ -3,8 +3,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    "test",
+    "src/entities/**",
     "**/*.spec.ts",
-    "src/entities/**"
+    "**/*.test.ts"
   ]
 }

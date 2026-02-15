@@ -12,11 +12,11 @@ model Tenant {
   name          String
   users         User[]
   tables        Table[]
-  bookings Booking[]
   menuCategories MenuCategory[]
   menuItems     MenuItem[]
   orders        Order[]
   tableRequests TableRequest[]
+  bookings      Booking[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   deleted       Boolean        @default(false)
@@ -28,9 +28,9 @@ model User {
   password    String
   name        String?
   role        Role
-  bookingsCreated Booking[]
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   tenantId    String
+  bookingsCreated Booking[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deleted     Boolean  @default(false)
@@ -49,8 +49,8 @@ model Table {
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   tenantId    String
   orders      Order[]
-  bookings Booking[]
   tableRequests TableRequest[]
+  bookings      Booking[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deleted     Boolean  @default(false)
