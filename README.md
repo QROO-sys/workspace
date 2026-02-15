@@ -31,6 +31,7 @@ A lightweight MVP for **QROO Workspace** where each desk has a QR code. Scanning
 
 ### 1) Backend
 ```bash
+ # IMPORTANT: run from repo root, then cd into ./backend
 cd backend
 cp .env.example .env   # or create .env (see below)
 npm install
@@ -44,13 +45,13 @@ Backend runs on `http://localhost:3001`
 
 ### 2) Frontend
 ```bash
-cd ../frontend
-cp .env.example .env
+	cd ../frontend
+	cp .env.example .env.local
 npm install
-npm run dev
+	npm run dev -- -p 3002
 ```
 
-Frontend runs on `http://localhost:3000`
+Frontend runs on `http://localhost:3002`
 
 ---
 
@@ -60,17 +61,17 @@ Frontend runs on `http://localhost:3000`
 ```env
 DATABASE_URL="postgresql://qroo:qroo@localhost:5432/qroo?schema=public"
 JWT_SECRET="changeme"
-FRONTEND_BASE_URL="http://localhost:3000"
-CORS_ORIGIN="http://localhost:3000"
+	FRONTEND_BASE_URL="http://localhost:3002"
+	CORS_ORIGIN="http://localhost:3002"
 
 # Optional seed defaults
 SEED_TENANT_NAME="QROO Workspace"
 SEED_OWNER_EMAIL="owner@qroo.local"
 SEED_OWNER_PASSWORD="ChangeMe123!"
-SEED_FRONTEND_BASE_URL="http://localhost:3000"
+	SEED_FRONTEND_BASE_URL="http://localhost:3002"
 ```
 
-### Frontend (`frontend/.env`)
+### Frontend (`frontend/.env.local`)
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:3001
 JWT_SECRET=changeme
@@ -94,8 +95,14 @@ Running `npm run seed` (backend) will create:
 ## Where to use it
 
 - Guest / customer: scan a desk QR → open `/d/<deskId>` → set hours + add-ons → **Check in**
+- After ordering/booking, the app routes to `/checkout?orderId=...`
 - Owner/staff: `/login` → `/owner/*` dashboard
 - bookings: `/owner/bookings` (owner creates and manages future desk slots)
+
+Admin tools:
+- Live requests: `/owner/requests`
+- Daily revenue analytics: `/owner/analytics`
+- Staff permissions (Owner only): `/owner/users`
 
 
 ---

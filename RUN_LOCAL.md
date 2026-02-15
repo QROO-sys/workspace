@@ -11,6 +11,7 @@ docker start qroo-db || docker run --name qroo-db -d -e POSTGRES_DB=qroo -e POST
 
 ## Backend
 ```bash
+# IMPORTANT: run these from the REPO ROOT, then cd into ./backend
 cd backend
 cp .env.example .env 2>/dev/null || true
 # Ensure DATABASE_URL in backend/.env:
@@ -26,15 +27,16 @@ Backend runs on http://localhost:3001
 
 ## Frontend
 ```bash
+# IMPORTANT: run these from the REPO ROOT, then cd into ./frontend
 cd frontend
-cp .env.example .env 2>/dev/null || true
-# Ensure NEXT_PUBLIC_API_URL=http://localhost:3001 in frontend/.env
+cp .env.example .env.local 2>/dev/null || true
+# Ensure NEXT_PUBLIC_API_URL=http://localhost:3001 in frontend/.env.local
 
 npm install
-npm run dev
+npm run dev -- -p 3002
 ```
 
-Frontend runs on http://localhost:3000
+Frontend runs on http://localhost:3002
 
 Default owner login:
 - owner@qroo.local
