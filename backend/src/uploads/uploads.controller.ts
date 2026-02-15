@@ -13,12 +13,19 @@ export class UploadsController {
   @Post('national-id')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          const dest = join(process.cwd(), 'uploads', 'national-ids');
-          ensureDir(dest);
-          cb(null, dest);
-        },
+      import { diskStorage } from 'multer';
+
+// ...
+
+storage: diskStorage({
+  destination: (_req: any, _file: any, cb: any) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req: any, file: any, cb: any) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  },
+}),
+
         filename: (_req, file, cb) => {
           const safeBase = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
           const stamp = new Date().toISOString().replace(/[:.]/g, '-');
