@@ -4,7 +4,6 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
 import type { Request } from 'express';
-import type { FileFilterCallback } from 'multer';
 
 function ensureDir(path: string) {
   if (!fs.existsSync(path)) fs.mkdirSync(path, { recursive: true });
@@ -28,7 +27,8 @@ export class UploadsController {
         },
       }),
       limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-      fileFilter: (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
+      // Keep callback signature aligned with Nest/Multer options.
+      fileFilter: (_req: Request, file: Express.Multer.File, cb: (error: any, acceptFile: boolean) => void) => {
         const allowed = ['.png', '.jpg', '.jpeg', '.pdf'];
         const ext = extname(file.originalname).toLowerCase();
         if (!allowed.includes(ext)) return cb(new BadRequestException('Only PNG/JPG/PDF allowed') as any, false);
