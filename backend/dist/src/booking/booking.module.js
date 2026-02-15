@@ -12,12 +12,13 @@ const booking_controller_1 = require("./booking.controller");
 const booking_service_1 = require("./booking.service");
 const prisma_service_1 = require("../prisma.service");
 const sms_module_1 = require("../sms/sms.module");
+const auth_module_1 = require("../auth/auth.module");
 let BookingModule = class BookingModule {
 };
 exports.BookingModule = BookingModule;
 exports.BookingModule = BookingModule = __decorate([
     (0, common_1.Module)({
-        imports: [sms_module_1.SmsModule],
+        imports: [sms_module_1.SmsModule, auth_module_1.AuthModule],
         controllers: [booking_controller_1.BookingController],
         providers: [booking_service_1.BookingService, prisma_service_1.PrismaService],
         exports: [booking_service_1.BookingService],

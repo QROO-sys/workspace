@@ -10,6 +10,7 @@ exports.TableRequestModule = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma.service");
 const sms_module_1 = require("../sms/sms.module");
+const auth_module_1 = require("../auth/auth.module");
 const public_table_request_controller_1 = require("./public-table-request.controller");
 const table_request_controller_1 = require("./table-request.controller");
 const table_request_service_1 = require("./table-request.service");
@@ -18,7 +19,7 @@ let TableRequestModule = class TableRequestModule {
 exports.TableRequestModule = TableRequestModule;
 exports.TableRequestModule = TableRequestModule = __decorate([
     (0, common_1.Module)({
-        imports: [sms_module_1.SmsModule],
+        imports: [sms_module_1.SmsModule, auth_module_1.AuthModule],
         controllers: [public_table_request_controller_1.PublicTableRequestController, table_request_controller_1.TableRequestController],
         providers: [table_request_service_1.TableRequestService, prisma_service_1.PrismaService],
     })
