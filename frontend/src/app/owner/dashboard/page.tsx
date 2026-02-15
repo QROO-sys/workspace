@@ -1,4 +1,3 @@
-import OwnerNav from "@/components/OwnerNav";
 import { serverApiFetch } from "@/lib/serverApi";
 
 function formatEGP(v: number) {
@@ -11,17 +10,18 @@ export default async function OwnerDashboardPage() {
     serverApiFetch("/orders"),
   ]);
 
-  const revenue = (orders || []).reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+  const revenue = (orders || [])
+    .filter((o: any) => o.status !== "CANCELLED")
+    .reduce((sum: number, o: any) => sum + (o.total || 0), 0);
   const pending = (orders || []).filter((o: any) => o.status === "PENDING").length;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Owner Dashboard</h1>
+          <h1 className="text-2xl font-bold">Admin Dashboard</h1>
           <p className="text-sm text-gray-600">QROO Workspace sessions (orders) per desk.</p>
         </div>
-        <OwnerNav />
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">

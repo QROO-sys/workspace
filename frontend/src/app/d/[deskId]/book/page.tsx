@@ -1,4 +1,4 @@
-import DeskBookingClient from "@/components/DeskBookingClient";
+import DeskCheckinClient from "@/components/DeskCheckinClient";
 
 export default async function DeskBookingPage({ params }: { params: { deskId: string } }) {
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -14,5 +14,5 @@ export default async function DeskBookingPage({ params }: { params: { deskId: st
   }
 
   const data = await res.json();
-  return <DeskBookingClient desk={data.desk} />;
+  return <DeskCheckinClient desk={data.desk} menuItems={data.menuItems || []} upcoming={data.upcomingBookings || []} defaultMode="LATER" />;
 }

@@ -1,309 +1,377 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import TimeSlotGrid from "@/components/TimeSlotGrid";
 import { apiFetch } from "@/lib/api";
-
-type MenuItem = { id: string; sku: string; name: string; description?: string | null; price: number };
-type Desk = { id: string; name: string; qrUrl: string; laptopSerial?: string | null };
-type UpcomingBooking = { id: string; startAt: string; endAt: string; status: string };
-
-const SKU_EXTRA_HOUR = "001";
-const SKU_COFFEE = "002";
 
 function formatEGP(v: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v) + " EGP";
 }
 
-function toDatetimeLocalValue(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-}
-
-function prettyTime(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
-}
-
 export default function DeskCheckinClient({
   desk,
   menuItems,
-  upcoming = [],
+  upcoming,
+  defaultMode = "NOW",
 }: {
-  desk: Desk;
-  menuItems: MenuItem[];
-  upcoming?: UpcomingBooking[];
+  desk: any;
+  menuItems: any[];
+  upcoming: any[];
+  defaultMode?: "NOW" | "LATER";
 }) {
+  const router = useRouter();
+
+  const [startMode, setStartMode] = useState<"NOW" | "LATER">(defaultMode);
+  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
+  const [occupied, setOccupied] = useState<Array<{ startAt: string; endAt: string }>>([]);
+  const [selectedStartISO, setSelectedStartISO] = useState<string>("");
+  const [availabilityErr, setAvailabilityErr] = useState<string | null>(null);
+
+  const [extraHours, setExtraHours] = useState<number>(1);
+  const [coffeeQty, setCoffeeQty] = useState<number>(0);
+  const [otherQty, setOtherQty] = useState<Record<string, number>>({});
+
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
 
-  const [startMode, setStartMode] = useState<"NOW" | "LATER">("NOW");
-  const [startLocal, setStartLocal] = useState(() => toDatetimeLocalValue(new Date(Date.now() + 15 * 60 * 1000)));
+  const [idFile, setIdFile] = useState<File | null>(null);
+  const [idPath, setIdPath] = useState<string>("");
+  const [idBusy, setIdBusy] = useState(false);
 
-  const [qty, setQty] = useState<Record<string, number>>(() => {
-    // Default: 1 hour
-    const initial: Record<string, number> = {};
-    for (const mi of menuItems) {
-      if (mi.sku === SKU_EXTRA_HOUR) initial[mi.id] = 1;
-      else initial[mi.id] = 0;
-    }
-    return initial;
-  });
-
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const hoursQty = useMemo(() => {
-    const extra = menuItems.find((m) => m.sku === SKU_EXTRA_HOUR);
-    return extra ? qty[extra.id] || 0 : 0;
-  }, [qty, menuItems]);
+  const extraHourMi = useMemo(
+    () =>
+      menuItems.find((m) => {
+        const sku = (m.sku || "").toUpperCase();
+        const name = (m.name || "").toLowerCase();
+        return sku === "HOUR" || sku === "001" || name === "extra hour";
+      }),
+    [menuItems]
+  );
+  const coffeeMi = useMemo(
+    () =>
+      menuItems.find((m) => {
+        const sku = (m.sku || "").toUpperCase();
+        const name = (m.name || "").toLowerCase();
+        return sku === "COFFEE" || sku === "002" || name === "coffee";
+      }),
+    [menuItems]
+  );
 
-  const preview = useMemo(() => {
-    // Preview rule: first N coffees are free where N = hoursQty
-    const coffee = menuItems.find((m) => m.sku === SKU_COFFEE);
-    const coffeeQty = coffee ? qty[coffee.id] || 0 : 0;
-    const freeCoffee = Math.min(coffeeQty, Math.max(0, hoursQty));
-    const paidCoffee = Math.max(0, coffeeQty - freeCoffee);
+  const otherItems = useMemo(() => {
+    const set = new Set([extraHourMi?.id, coffeeMi?.id].filter(Boolean) as string[]);
+    return menuItems.filter((m) => !set.has(m.id));
+  }, [menuItems, extraHourMi?.id, coffeeMi?.id]);
 
-    let total = 0;
-    for (const mi of menuItems) {
-      const q = qty[mi.id] || 0;
-      if (!q) continue;
-      if (coffee && mi.id === coffee.id) {
-        total += paidCoffee * mi.price;
-        continue;
-      }
-      total += q * mi.price;
+  const pricePreview = useMemo(() => {
+    const rate = Number(desk?.hourlyRate || 0);
+    const hours = Math.max(1, Number(extraHours || 1));
+    let total = rate * hours;
+    if (coffeeMi) total += Number(coffeeMi.price || 0) * Math.max(0, Number(coffeeQty || 0));
+    for (const it of otherItems) {
+      const q = Math.max(0, Number(otherQty[it.id] || 0));
+      total += Number(it.price || 0) * q;
     }
-    return { freeCoffee, paidCoffee, total };
-  }, [qty, menuItems, hoursQty]);
+    return total;
+  }, [desk?.hourlyRate, extraHours, coffeeMi, coffeeQty, otherItems, otherQty]);
 
-  function inc(id: string) {
-    setQty((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
-  }
-  function dec(id: string) {
-    setQty((prev) => ({ ...prev, [id]: Math.max(0, (prev[id] || 0) - 1) }));
+  const selectedStartDate = selectedStartISO ? new Date(selectedStartISO) : null;
+  const selectedDay = useMemo(() => new Date(`${dateStr}T00:00:00`), [dateStr]);
+
+  useEffect(() => {
+    if (startMode !== "LATER") return;
+
+    let cancelled = false;
+    setAvailabilityErr(null);
+
+    apiFetch(`/public/desks/${desk.id}/availability?date=${encodeURIComponent(dateStr)}`)
+      .then((d) => {
+        if (cancelled) return;
+        setOccupied((d?.occupied || []).map((x: any) => ({ startAt: x.startAt, endAt: x.endAt })));
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setAvailabilityErr(e?.message || "Failed to load availability");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [startMode, dateStr, desk.id]);
+
+  async function uploadNationalIdIfNeeded() {
+    if (!idFile) return "";
+    if (idPath) return idPath;
+
+    setIdBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", idFile);
+
+      const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const res = await fetch(`${base}/public/uploads/national-id`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const d = await res.json();
+      const p = d?.path || "";
+      setIdPath(p);
+      return p;
+    } finally {
+      setIdBusy(false);
+    }
   }
 
-  async function submit() {
+  async function submitOrder() {
     setErr(null);
-    setResult(null);
 
-    if (hoursQty <= 0) {
-      setErr("Add at least 1 hour (Extra hour) to continue.");
+    if (!extraHourMi) {
+      setErr("Missing 'Extra hour' menu item (sku HOUR). Add it in Admin → Menu.");
       return;
     }
 
-    const items = Object.entries(qty)
-      .map(([menuItemId, quantity]) => ({ menuItemId, quantity }))
-      .filter((i) => i.quantity > 0);
+    if (!customerName.trim() || !customerPhone.trim()) {
+      setErr("Name and phone are required.");
+      return;
+    }
 
     let startAt: string | undefined;
     if (startMode === "LATER") {
-      const d = new Date(startLocal);
-      if (Number.isNaN(d.getTime())) {
-        setErr("Please choose a valid future start time.");
+      if (!selectedStartISO) {
+        setErr("Pick a start time first.");
         return;
       }
-      startAt = d.toISOString();
+      startAt = new Date(selectedStartISO).toISOString();
     }
 
-    setSubmitting(true);
+    const items: Array<{ menuItemId: string; quantity: number }> = [];
+    items.push({ menuItemId: extraHourMi.id, quantity: Math.max(1, Number(extraHours || 1)) });
+    if (coffeeMi && coffeeQty > 0) items.push({ menuItemId: coffeeMi.id, quantity: Math.max(0, Number(coffeeQty || 0)) });
+    for (const it of otherItems) {
+      const q = Math.max(0, Number(otherQty[it.id] || 0));
+      if (q > 0) items.push({ menuItemId: it.id, quantity: q });
+    }
+
+    setBusy(true);
     try {
+      const customerNationalIdPath = await uploadNationalIdIfNeeded();
       const order = await apiFetch("/orders/guest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableId: desk.id,
-          customerName: customerName || undefined,
-          customerPhone: customerPhone || undefined,
-          startAt,
           items,
+          startAt,
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          customerNationalIdPath: customerNationalIdPath || undefined,
         }),
       });
-      setResult(order);
+
+      router.push(`/checkout?orderId=${encodeURIComponent(order.id)}`);
     } catch (e: any) {
-      setErr(e?.message || "Failed to submit.");
+      setErr(e?.message || "Failed to place order");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
+    }
+  }
+
+  async function sendQuickRequest(requestType: "CALL_STAFF" | "WATER" | "BILL") {
+    setErr(null);
+    try {
+      await apiFetch(`/public/tables/${desk.id}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestType,
+          customerName: customerName.trim() || undefined,
+          customerPhone: customerPhone.trim() || undefined,
+        }),
+      });
+    } catch (e: any) {
+      setErr(e?.message || "Failed to send request");
     }
   }
 
   return (
-    <div className="mx-auto max-w-md px-4 py-8">
-      <div className="rounded border bg-white p-4">
-        <h1 className="text-xl font-bold">{desk.name}</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Workspace rate: <b>100 EGP/hr</b>. Includes <b>1 free coffee per paid hour</b>.
-        </p>
-        {desk.laptopSerial ? (
-          <p className="mt-1 text-xs text-gray-600">
-            Laptop assigned: <b>{desk.laptopSerial}</b>
-          </p>
+    <div className="mx-auto max-w-2xl px-6 py-8">
+      <h1 className="text-2xl font-bold">{desk.name}</h1>
+      <p className="text-sm text-gray-600">Use this QR page to extend time, order items, or book later.</p>
+
+      {upcoming?.length ? (
+        <div className="mt-4 rounded border bg-white p-4">
+          <div className="text-sm font-semibold">Upcoming bookings</div>
+          <ul className="mt-2 space-y-1 text-sm text-gray-700">
+            {upcoming.slice(0, 5).map((b: any) => (
+              <li key={b.id}>
+                {new Date(b.startAt).toLocaleString()} → {new Date(b.endAt).toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {err ? <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div> : null}
+
+      <div className="mt-4 rounded border bg-white p-4">
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium">Session</label>
+          <select
+            className="rounded border px-3 py-2 text-sm"
+            value={startMode}
+            onChange={(e) => {
+              const v = e.target.value as any;
+              setStartMode(v);
+              if (v === "NOW") setSelectedStartISO("");
+            }}
+          >
+            <option value="NOW">Start now</option>
+            <option value="LATER">Book later</option>
+          </select>
+        </div>
+
+        {startMode === "LATER" ? (
+          <div className="mt-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <label className="text-sm font-medium">Pick a day</label>
+                <input
+                  className="mt-1 w-full rounded border px-3 py-2"
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => {
+                    setDateStr(e.target.value);
+                    setSelectedStartISO("");
+                  }}
+                />
+              </div>
+              <div className="text-xs text-gray-600">Green = available, red = unavailable</div>
+            </div>
+
+            {availabilityErr ? (
+              <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{availabilityErr}</div>
+            ) : null}
+
+            <div className="mt-3">
+              <TimeSlotGrid
+                date={selectedDay}
+                occupied={occupied}
+                durationHours={Math.max(1, Number(extraHours || 1))}
+                selected={selectedStartDate}
+                onSelect={(d) => setSelectedStartISO(d.toISOString())}
+              />
+            </div>
+          </div>
         ) : null}
 
-        <div className="mt-4 grid gap-2">
-          <input
-            className="w-full rounded border p-2"
-            placeholder="Your name (optional)"
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
-          />
-          <input
-            className="w-full rounded border p-2"
-            placeholder="Phone (optional)"
-            value={customerPhone}
-            onChange={(e) => setCustomerPhone(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {upcoming.length > 0 && (
-        <div className="mt-4 rounded border bg-white p-4">
-          <h2 className="text-lg font-semibold">Upcoming bookings for this desk</h2>
-          <div className="mt-2 space-y-2 text-sm">
-            {upcoming.slice(0, 5).map((b) => (
-              <div key={b.id} className="flex items-start justify-between gap-3 rounded bg-gray-50 p-2">
-                <div>
-                  <div className="font-medium">{prettyTime(b.startAt)} → {prettyTime(b.endAt)}</div>
-                  <div className="text-xs text-gray-600">Status: {b.status}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-gray-600">
-            If your preferred slot is taken, try another desk or choose a different time.
-          </p>
-        </div>
-      )}
-
-      <div className="mt-4 rounded border bg-white p-4">
-        <h2 className="text-lg font-semibold">When do you want to start?</h2>
-
-        <div className="mt-2 flex gap-2">
-          <button
-            type="button"
-            className={`flex-1 rounded border px-3 py-2 text-sm ${startMode === "NOW" ? "bg-gray-900 text-white" : "bg-white"}`}
-            onClick={() => setStartMode("NOW")}
-          >
-            Now
-          </button>
-          <button
-            type="button"
-            className={`flex-1 rounded border px-3 py-2 text-sm ${startMode === "LATER" ? "bg-gray-900 text-white" : "bg-white"}`}
-            onClick={() => setStartMode("LATER")}
-          >
-            Book later
-          </button>
-        </div>
-
-        {startMode === "LATER" && (
-          <div className="mt-3">
-            <label className="text-xs text-gray-600">Start time</label>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-sm font-medium">Hours</label>
             <input
-              type="datetime-local"
-              className="mt-1 w-full rounded border p-2"
-              value={startLocal}
-              onChange={(e) => setStartLocal(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+              type="number"
+              min={1}
+              value={extraHours}
+              onChange={(e) => setExtraHours(Number(e.target.value || 1))}
             />
-            <p className="mt-1 text-xs text-gray-600">
-              Booking creates a reserved time slot. If the desk is already booked, you’ll get an error.
-            </p>
+            <div className="mt-1 text-xs text-gray-600">Rate: {formatEGP(Number(desk.hourlyRate || 0))}/hour</div>
           </div>
-        )}
-      </div>
 
-      <div className="mt-4 rounded border bg-white p-4">
-        <h2 className="text-lg font-semibold">Select hours + add-ons</h2>
+          <div>
+            <label className="text-sm font-medium">Coffee</label>
+            <input
+              className="mt-1 w-full rounded border px-3 py-2"
+              type="number"
+              min={0}
+              value={coffeeQty}
+              onChange={(e) => setCoffeeQty(Number(e.target.value || 0))}
+            />
+            <div className="mt-1 text-xs text-gray-600">{coffeeMi ? `Coffee: ${formatEGP(Number(coffeeMi.price || 0))}` : "Coffee item not set"}</div>
+          </div>
+        </div>
 
-        <div className="mt-3 space-y-3">
-          {menuItems.map((mi) => {
-            const q = qty[mi.id] || 0;
-            const isCoffee = mi.sku === SKU_COFFEE;
-            const isHours = mi.sku === SKU_EXTRA_HOUR;
-
-            return (
-              <div key={mi.id} className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium">{mi.name}</div>
-                  <div className="text-xs text-gray-600">
-                    {isCoffee
-                      ? `${formatEGP(mi.price)} (free up to ${hoursQty} / hour(s))`
-                      : formatEGP(mi.price)}
-                    {mi.description ? ` • ${mi.description}` : ""}
-                    {isHours ? " • Required" : ""}
+        {otherItems.length ? (
+          <div className="mt-4">
+            <div className="text-sm font-medium">Other items</div>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              {otherItems.map((it) => (
+                <div key={it.id} className="rounded border p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{it.name}</div>
+                      <div className="text-xs text-gray-600">{formatEGP(Number(it.price || 0))}</div>
+                    </div>
+                    <input
+                      className="w-20 rounded border px-2 py-1"
+                      type="number"
+                      min={0}
+                      value={otherQty[it.id] || 0}
+                      onChange={(e) => setOtherQty((prev) => ({ ...prev, [it.id]: Number(e.target.value || 0) }))}
+                    />
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    className="h-8 w-8 rounded border bg-gray-50"
-                    onClick={() => dec(mi.id)}
-                    type="button"
-                    aria-label={`Decrease ${mi.name}`}
-                  >
-                    –
-                  </button>
-                  <div className="w-8 text-center">{q}</div>
-                  <button
-                    className="h-8 w-8 rounded border bg-gray-50"
-                    onClick={() => inc(mi.id)}
-                    type="button"
-                    aria-label={`Increase ${mi.name}`}
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-4 rounded bg-gray-50 p-3 text-sm">
-          <div className="flex justify-between">
-            <span>Free coffees applied (preview)</span>
-            <span>{preview.freeCoffee}</span>
+              ))}
+            </div>
           </div>
-          <div className="flex justify-between font-semibold">
-            <span>Total (preview)</span>
-            <span>{formatEGP(preview.total)}</span>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-sm font-medium">Your name</label>
+            <input className="mt-1 w-full rounded border px-3 py-2" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Phone</label>
+            <input className="mt-1 w-full rounded border px-3 py-2" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
           </div>
         </div>
 
-        {err && <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{err}</div>}
-
-        <button
-          className="mt-4 w-full rounded bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-60"
-          disabled={submitting}
-          onClick={submit}
-          type="button"
-        >
-          {submitting ? "Submitting..." : startMode === "LATER" ? "Book time slot" : "Check in / Start now"}
-        </button>
-
-        {result && (
-          <div className="mt-4 rounded border bg-green-50 p-3 text-sm">
-            <div className="font-semibold">{startMode === "LATER" ? "Booked!" : "Checked in!"}</div>
-            <div className="mt-1">Session ID: {result.id}</div>
-            {result.startAt && result.endAt ? (
-              <div className="mt-1">
-                Time: <b>{prettyTime(result.startAt)}</b> → <b>{prettyTime(result.endAt)}</b>
-              </div>
-            ) : null}
-            <div className="mt-1">
-              Total: <b>{formatEGP(result.total)}</b>
-            </div>
-            <div className="mt-1 text-gray-700">
-              Staff can manage this from the dashboard.
-            </div>
+        {desk?.laptopSerial ? (
+          <div className="mt-4 rounded border bg-gray-50 p-3">
+            <div className="text-sm font-medium">Laptop use</div>
+            <div className="mt-1 text-xs text-gray-600">This desk has a laptop assigned ({desk.laptopSerial}). You can upload a National ID photo for verification.</div>
+            <input
+              className="mt-2 w-full"
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => setIdFile(e.target.files?.[0] || null)}
+            />
+            {idBusy ? <div className="mt-2 text-xs text-gray-600">Uploading…</div> : null}
+            {idPath ? <div className="mt-2 text-xs text-gray-600">Uploaded: {idPath}</div> : null}
           </div>
-        )}
+        ) : null}
+
+        <div className="mt-4 rounded border bg-gray-50 p-3">
+          <div className="text-sm font-medium">Quick requests (alerts admin)</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="rounded border px-3 py-1 text-sm" onClick={() => sendQuickRequest("CALL_STAFF")}>Call staff</button>
+            <button type="button" className="rounded border px-3 py-1 text-sm" onClick={() => sendQuickRequest("WATER")}>Water</button>
+            <button type="button" className="rounded border px-3 py-1 text-sm" onClick={() => sendQuickRequest("BILL")}>Bill</button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm text-gray-600">Total</div>
+            <div className="text-xl font-bold">{formatEGP(pricePreview)}</div>
+          </div>
+          <button
+            className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+            disabled={busy || idBusy}
+            onClick={submitOrder}
+            type="button"
+          >
+            {busy ? "Submitting…" : "Proceed to checkout"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 text-xs text-gray-600">
+        Tip: Admin can see live alerts in Admin → Requests. SMS alerts require SMS_PROVIDER and SMS_ADMIN_TO in the backend .env.
       </div>
     </div>
   );

@@ -5,16 +5,19 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 
-type Desk = { id: string; name: string; qrUrl: string; laptopSerial?: string | null };
+type Desk = { id: string; name: string; qrUrl: string; laptopSerial?: string | null; hourlyRate?: number };
 
 export default function OwnerDeskList({ desks }: { desks: Desk[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [laptopSerial, setLaptopSerial] = useState("");
+  const [hourlyRate, setHourlyRate] = useState("100");
   const [serials, setSerials] = useState<Record<string, string>>(() => Object.fromEntries(desks.map(d => [d.id, d.laptopSerial || ""])));
+  const [rates, setRates] = useState<Record<string, string>>(() => Object.fromEntries(desks.map(d => [d.id, String(d.hourlyRate ?? 100)])));
 
   useEffect(() => {
     setSerials(Object.fromEntries(desks.map(d => [d.id, d.laptopSerial || ""])));
+    setRates(Object.fromEntries(desks.map(d => [d.id, String(d.hourlyRate ?? 100)])));
   }, [desks]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,10 +32,15 @@ export default function OwnerDeskList({ desks }: { desks: Desk[] }) {
       await apiFetch("/desks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, laptopSerial: laptopSerial || undefined }),
+        body: JSON.stringify({
+          name,
+          laptopSerial: laptopSerial || undefined,
+          hourlyRate: hourlyRate ? Number(hourlyRate) : undefined,
+        }),
       });
       setName("");
       setLaptopSerial("");
+      setHourlyRate("100");
       router.refresh();
     } catch (e: any) {
       setErr(e?.message || "Failed to create");
@@ -42,20 +50,21 @@ export default function OwnerDeskList({ desks }: { desks: Desk[] }) {
   }
 
 
-async function saveSerial(id: string) {
+async function saveDesk(id: string) {
   setBusy(true);
   setErr(null);
   try {
     const laptopSerial = (serials[id] || "").trim();
-    if (!laptopSerial) { setErr("Laptop serial can't be blank."); return; }
+    const hourlyRate = Number(rates[id] || 0);
+    if (!Number.isFinite(hourlyRate) || hourlyRate < 0) { setErr("Hourly rate must be a valid number."); return; }
     await apiFetch(`/desks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ laptopSerial }),
+      body: JSON.stringify({ laptopSerial: laptopSerial || null, hourlyRate }),
     });
     router.refresh();
   } catch (e: any) {
-    setErr(e?.message || "Failed to update laptop serial");
+    setErr(e?.message || "Failed to update desk");
   } finally {
     setBusy(false);
   }
@@ -77,9 +86,10 @@ async function saveSerial(id: string) {
 
   return (
     <div className="mt-6">
-      <form onSubmit={createDesk} className="grid gap-2 sm:grid-cols-3">
+      <form onSubmit={createDesk} className="grid gap-2 sm:grid-cols-4">
         <input className="rounded border p-2" placeholder="New desk name (e.g., Desk 11)" value={name} onChange={(e) => setName(e.target.value)} />
         <input className="rounded border p-2" placeholder="Laptop serial (optional)" value={laptopSerial} onChange={(e) => setLaptopSerial(e.target.value)} />
+        <input className="rounded border p-2" placeholder="Hourly rate (EGP)" value={hourlyRate} onChange={(e) => setHourlyRate(e.target.value)} />
         <button className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-60" disabled={busy} type="submit">
           Add
         </button>
@@ -94,6 +104,7 @@ async function saveSerial(id: string) {
                 <div className="font-semibold">{d.name}</div>
                 <div className="mt-1 text-xs text-gray-600 break-all">{d.qrUrl}</div>
                 <div className="mt-1 text-xs text-gray-700"><b>Laptop:</b> {d.laptopSerial || "—"}</div>
+                <div className="mt-1 text-xs text-gray-700"><b>Hourly rate:</b> {d.hourlyRate ?? 100} EGP/hr</div>
                 <div className="mt-2 flex items-center gap-2">
                   <input
                     className="w-full rounded border p-2 text-xs"
@@ -101,13 +112,19 @@ async function saveSerial(id: string) {
                     value={serials[d.id] ?? ""}
                     onChange={(e) => setSerials(prev => ({ ...prev, [d.id]: e.target.value }))}
                   />
+                  <input
+                    className="w-28 rounded border p-2 text-xs"
+                    placeholder="EGP/hr"
+                    value={rates[d.id] ?? "100"}
+                    onChange={(e) => setRates(prev => ({ ...prev, [d.id]: e.target.value }))}
+                  />
                   <button
                     className="rounded border px-2 py-2 text-xs"
                     disabled={busy}
                     type="button"
-                    onClick={() => saveSerial(d.id)}
+                    onClick={() => saveDesk(d.id)}
                   >
-                    Update serial
+                    Save
                   </button>
                 </div>
               </div>

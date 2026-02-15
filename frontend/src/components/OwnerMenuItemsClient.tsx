@@ -17,6 +17,19 @@ export default function OwnerMenuItemsClient({ items, categories }: { items: Men
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [edits, setEdits] = useState<Record<string, { name: string; price: string; description: string }>>(() =>
+    Object.fromEntries(
+      items.map((it) => [
+        it.id,
+        {
+          name: it.name,
+          price: String(it.price ?? 0),
+          description: it.description || "",
+        },
+      ]),
+    ),
+  );
+
   const catsById = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories]);
 
   async function create(e: React.FormEvent) {
@@ -59,6 +72,28 @@ export default function OwnerMenuItemsClient({ items, categories }: { items: Men
     }
   }
 
+  async function save(id: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const e = edits[id];
+      const p = Number(e?.price || 0);
+      if (!e?.name?.trim()) throw new Error("Name is required");
+      if (!Number.isFinite(p) || p < 0) throw new Error("Price must be a valid number");
+
+      await apiFetch(`/menu-items/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: e.name.trim(), price: p, description: e.description || null }),
+      });
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Failed to update");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="mt-6">
       <div className="rounded border bg-white p-4">
@@ -87,16 +122,42 @@ export default function OwnerMenuItemsClient({ items, categories }: { items: Men
 
       <div className="mt-6 space-y-2">
         {items.map((it) => (
-          <div key={it.id} className="flex items-center justify-between rounded border bg-white p-3">
-            <div>
-              <div className="font-medium">[{it.sku}] {it.name} — {it.price} EGP</div>
+          <div key={it.id} className="rounded border bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="font-medium">[{it.sku}]</div>
               <div className="text-xs text-gray-600">
-                {catsById.get(it.categoryId)?.name || "Category"}{it.description ? ` • ${it.description}` : ""}
+                {catsById.get(it.categoryId)?.name || "Category"}
+              </div>
+              <div className="ml-auto flex gap-2">
+                <button className="rounded border px-2 py-1 text-xs" disabled={busy} onClick={() => save(it.id)} type="button">
+                  Save
+                </button>
+                <button className="rounded border px-2 py-1 text-xs" disabled={busy} onClick={() => remove(it.id)} type="button">
+                  Delete
+                </button>
               </div>
             </div>
-            <button className="rounded border px-2 py-1 text-xs" disabled={busy} onClick={() => remove(it.id)} type="button">
-              Delete
-            </button>
+
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              <input
+                className="rounded border p-2 text-sm"
+                value={edits[it.id]?.name ?? it.name}
+                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), name: e.target.value } }))}
+              />
+              <input
+                className="rounded border p-2 text-sm"
+                type="number"
+                min="0"
+                value={edits[it.id]?.price ?? String(it.price)}
+                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), price: e.target.value } }))}
+              />
+              <input
+                className="rounded border p-2 text-sm"
+                placeholder="Description"
+                value={edits[it.id]?.description ?? (it.description || "")}
+                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), description: e.target.value } }))}
+              />
+            </div>
           </div>
         ))}
         {items.length === 0 && <div className="text-sm text-gray-600">No menu items yet.</div>}
