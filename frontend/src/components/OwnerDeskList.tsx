@@ -107,6 +107,50 @@ async function saveDesk(id: string) {
     }
   }
 
+  async function applyBulkRate() {
+
+    setBusy(true);
+
+    setErr(null);
+
+    try {
+
+      const hr = Number(bulkRate || 0);
+
+      if (!Number.isFinite(hr) || hr < 0) {
+
+        setErr("Hourly rate must be a valid number.");
+
+        return;
+
+      }
+
+      await apiFetch(`/desks/bulk/hourly-rate`, {
+
+        method: "PATCH",
+
+        headers: { "Content-Type": "application/json" },
+
+        body: JSON.stringify({ hourlyRate: hr }),
+
+      });
+
+      router.refresh();
+
+    } catch (e: any) {
+
+      setErr(e?.message || "Failed to update all rates");
+
+    } finally {
+
+      setBusy(false);
+
+    }
+
+  }
+
+
+
   return (
     <div className="mt-6">
       <form onSubmit={createDesk} className="grid gap-2 sm:grid-cols-4">
@@ -131,7 +175,7 @@ async function saveDesk(id: string) {
           className="rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
           disabled={busy}
           type="button"
-          onClick={setAllRates}
+          onClick={applyBulkRate}
         >
           Apply
         </button>
