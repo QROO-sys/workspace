@@ -24,15 +24,22 @@ let AnalyticsController = class AnalyticsController {
         this.analytics = analytics;
     }
     async daily(req, days) {
-        const data = await this.analytics.dailyRevenue(req.tenantId, Number(days) || 30);
+        let nDays = Number(days) || 30;
+        if (req.user?.role === client_1.Role.STAFF) {
+            nDays = Math.min(Math.max(nDays, 1), 7);
+        }
+        const data = await this.analytics.dailyRevenue(req.tenantId, nDays);
+        if (req.user?.role === client_1.Role.STAFF) {
+            return { days: nDays, data };
+        }
         const totals = data.reduce((acc, d) => ({ gross: acc.gross + d.gross, completed: acc.completed + d.completed }), { gross: 0, completed: 0 });
-        return { days: Number(days) || 30, totals, data };
+        return { days: nDays, totals, data };
     }
 };
 exports.AnalyticsController = AnalyticsController;
 __decorate([
     (0, common_1.Get)('revenue/daily'),
-    (0, roles_decorator_1.Roles)(client_1.Role.OWNER, client_1.Role.MANAGER),
+    (0, roles_decorator_1.Roles)(client_1.Role.OWNER, client_1.Role.MANAGER, client_1.Role.STAFF),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)('days')),
     __metadata("design:type", Function),

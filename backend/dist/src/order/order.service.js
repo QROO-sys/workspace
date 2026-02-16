@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var OrderService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderService = void 0;
 const common_1 = require("@nestjs/common");
@@ -19,14 +20,25 @@ function norm(s) {
 }
 const SKU_EXTRA_HOUR = '001';
 const SKU_COFFEE = '002';
-let OrderService = class OrderService {
+let OrderService = OrderService_1 = class OrderService {
     constructor(prisma, sms) {
         this.prisma = prisma;
         this.sms = sms;
+        this.logger = new common_1.Logger(OrderService_1.name);
     }
     async listForTenant(tenantId) {
         return this.prisma.order.findMany({
             where: { tenantId, deleted: false },
+            orderBy: { createdAt: 'desc' },
+            include: {
+                table: true,
+                orderItems: { include: { menuItem: true } },
+            },
+        });
+    }
+    async listForTenantSince(tenantId, since) {
+        return this.prisma.order.findMany({
+            where: { tenantId, deleted: false, createdAt: { gte: since } },
             orderBy: { createdAt: 'desc' },
             include: {
                 table: true,
@@ -183,7 +195,12 @@ let OrderService = class OrderService {
             },
             include: { table: true, orderItems: { include: { menuItem: true } } },
         });
-        void this.sms.sendToAdmin(`🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`);
+        void this.sms
+            .sendToAdmin(`🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`)
+            .then((r) => {
+            if (!r.ok)
+                this.logger.warn(`[SMS] ${r.error}`);
+        });
         if (source === 'GUEST') {
             const summary = order.orderItems
                 .map((oi) => `${oi.quantity}x ${oi.menuItem?.name ?? 'Item'}`)
@@ -208,7 +225,7 @@ let OrderService = class OrderService {
     }
 };
 exports.OrderService = OrderService;
-exports.OrderService = OrderService = __decorate([
+exports.OrderService = OrderService = OrderService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         sms_service_1.SmsService])

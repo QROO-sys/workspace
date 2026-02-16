@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var BookingService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BookingService = void 0;
 const common_1 = require("@nestjs/common");
@@ -33,10 +34,11 @@ function validateRange(startAt, endAt) {
         throw new common_1.BadRequestException(`Booking too long (max ${maxHours} hours)`);
     }
 }
-let BookingService = class BookingService {
+let BookingService = BookingService_1 = class BookingService {
     constructor(prisma, sms) {
         this.prisma = prisma;
         this.sms = sms;
+        this.logger = new common_1.Logger(BookingService_1.name);
     }
     async ensureDesk(tableId) {
         const desk = await this.prisma.table.findFirst({ where: { id: tableId, deleted: false } });
@@ -103,7 +105,12 @@ let BookingService = class BookingService {
             },
             include: { table: true },
         });
-        void this.sms.sendToAdmin(`📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`);
+        void this.sms
+            .sendToAdmin(`📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`)
+            .then((r) => {
+            if (!r.ok)
+                this.logger.warn(`[SMS] ${r.error}`);
+        });
         return created;
     }
     async cancelForTenant(tenantId, id) {
@@ -115,7 +122,12 @@ let BookingService = class BookingService {
             data: { status: client_1.BookingStatus.CANCELLED },
             include: { table: true },
         });
-        void this.sms.sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`);
+        void this.sms
+            .sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`)
+            .then((r) => {
+            if (!r.ok)
+                this.logger.warn(`[SMS] ${r.error}`);
+        });
         return updated;
     }
     async listForDeskPublic(deskId, from, to) {
@@ -166,12 +178,17 @@ let BookingService = class BookingService {
                 status: true,
             },
         });
-        void this.sms.sendToAdmin(`📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`);
+        void this.sms
+            .sendToAdmin(`📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`)
+            .then((r) => {
+            if (!r.ok)
+                this.logger.warn(`[SMS] ${r.error}`);
+        });
         return created;
     }
 };
 exports.BookingService = BookingService;
-exports.BookingService = BookingService = __decorate([
+exports.BookingService = BookingService = BookingService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         sms_service_1.SmsService])

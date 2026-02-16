@@ -31,6 +31,9 @@ let TableController = class TableController {
     async create(dto, req) {
         return this.service.create(dto, req.user.tenantId);
     }
+    async bulkHourlyRate(body, req) {
+        return this.service.bulkSetHourlyRate(req.user.tenantId, Number(body?.hourlyRate));
+    }
     async update(id, dto, req) {
         return this.service.update(id, dto, req.user.tenantId);
     }
@@ -63,6 +66,15 @@ __decorate([
     __metadata("design:paramtypes", [dto_1.CreateTableDto, Object]),
     __metadata("design:returntype", Promise)
 ], TableController.prototype, "create", null);
+__decorate([
+    (0, common_1.Patch)('bulk/hourly-rate'),
+    (0, common_1.UseGuards)(owner_guard_1.OwnerGuard),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], TableController.prototype, "bulkHourlyRate", null);
 __decorate([
     (0, common_1.Patch)(':id'),
     (0, common_1.UseGuards)(owner_guard_1.OwnerGuard),

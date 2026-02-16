@@ -6,18 +6,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SmsModule = void 0;
+exports.DbToolsModule = void 0;
 const common_1 = require("@nestjs/common");
-const sms_service_1 = require("./sms.service");
-const sms_controller_1 = require("./sms.controller");
-let SmsModule = class SmsModule {
+const db_tools_controller_1 = require("./db-tools.controller");
+let DbToolsModule = class DbToolsModule {
 };
-exports.SmsModule = SmsModule;
-exports.SmsModule = SmsModule = __decorate([
+exports.DbToolsModule = DbToolsModule;
+exports.DbToolsModule = DbToolsModule = __decorate([
     (0, common_1.Module)({
-        controllers: [sms_controller_1.SmsController],
-        providers: [sms_service_1.SmsService],
-        exports: [sms_service_1.SmsService],
+        controllers: [db_tools_controller_1.DbToolsController],
     })
-], SmsModule);
-//# sourceMappingURL=sms.module.js.map
+], DbToolsModule);
+//# sourceMappingURL=db-tools.module.js.map

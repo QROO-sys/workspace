@@ -22,6 +22,7 @@ const analytics_module_1 = require("./analytics/analytics.module");
 const users_module_1 = require("./users/users.module");
 const sms_module_1 = require("./sms/sms.module");
 const uploads_module_1 = require("./uploads/uploads.module");
+const db_tools_module_1 = require("./db-tools/db-tools.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -45,6 +46,7 @@ exports.AppModule = AppModule = __decorate([
             users_module_1.UsersModule,
             sms_module_1.SmsModule,
             uploads_module_1.UploadsModule,
+            db_tools_module_1.DbToolsModule,
         ],
         providers: [prisma_service_1.PrismaService],
     })

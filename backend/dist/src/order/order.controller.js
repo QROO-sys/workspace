@@ -34,6 +34,11 @@ let OrderController = class OrderController {
         return this.service.createOwnerOrder(req.user.tenantId, dto);
     }
     async list(req) {
+        if (req.user?.role === client_1.Role.STAFF) {
+            const since = new Date();
+            since.setHours(0, 0, 0, 0);
+            return this.service.listForTenantSince(req.user.tenantId, since);
+        }
         return this.service.listForTenant(req.user.tenantId);
     }
     async get(id, req) {

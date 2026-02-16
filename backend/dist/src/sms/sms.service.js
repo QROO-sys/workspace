@@ -52,6 +52,28 @@ let SmsService = SmsService_1 = class SmsService {
         this.logger.log(`[SMS] ${message}`);
         return { ok: true };
     }
+    async send(to, message) {
+        if (!to)
+            return { ok: false, error: 'Missing destination number' };
+        if (this.provider === 'twilio') {
+            const sid = process.env.TWILIO_ACCOUNT_SID;
+            const token = process.env.TWILIO_AUTH_TOKEN;
+            const from = process.env.TWILIO_FROM;
+            if (!sid || !token || !from) {
+                return { ok: false, error: 'Missing TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM' };
+            }
+            try {
+                await this.sendTwilio({ sid, token, from, to, body: message });
+                return { ok: true };
+            }
+            catch (e) {
+                this.logger.error(e?.message || e);
+                return { ok: false, error: e?.message || 'SMS failed' };
+            }
+        }
+        this.logger.log(`[SMS test -> ${to}] ${message}`);
+        return { ok: true };
+    }
     async sendTwilio(args) {
         const { sid, token, from, to, body } = args;
         const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`;
