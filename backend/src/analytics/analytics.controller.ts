@@ -11,13 +11,25 @@ export class AnalyticsController {
   constructor(private analytics: AnalyticsService) {}
 
   @Get('revenue/daily')
-  @Roles(Role.OWNER, Role.MANAGER)
+  // Staff can see DAILY revenue only (no totals). Owner/Manager can see totals + daily.
+  @Roles(Role.OWNER, Role.MANAGER, Role.STAFF)
   async daily(@Req() req: any, @Query('days') days?: string) {
-    const data = await this.analytics.dailyRevenue(req.tenantId, Number(days) || 30);
+    let nDays = Number(days) || 30;
+    if (req.user?.role === Role.STAFF) {
+      // Staff: keep it strictly “daily” and prevent reconstructing all-time totals by asking for huge ranges.
+      nDays = Math.min(Math.max(nDays, 1), 7);
+    }
+    const data = await this.analytics.dailyRevenue(req.tenantId, nDays);
+
+    // Do NOT expose totals to STAFF.
+    if (req.user?.role === Role.STAFF) {
+      return { days: nDays, data };
+    }
+
     const totals = data.reduce(
       (acc, d) => ({ gross: acc.gross + d.gross, completed: acc.completed + d.completed }),
-      { gross: 0, completed: 0 }
+      { gross: 0, completed: 0 },
     );
-    return { days: Number(days) || 30, totals, data };
+    return { days: nDays, totals, data };
   }
 }

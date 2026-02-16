@@ -13,6 +13,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { UsersModule } from './users/users.module';
 import { SmsModule } from './sms/sms.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { DbToolsModule } from './db-tools/db-tools.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { UploadsModule } from './uploads/uploads.module';
     UsersModule,
     SmsModule,
     UploadsModule,
+    DbToolsModule,
   ],
   providers: [PrismaService],
 })

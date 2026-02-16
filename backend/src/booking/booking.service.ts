@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { BookingStatus } from '@prisma/client';
 import { CreateBookingDto } from './dto';
@@ -27,6 +27,7 @@ function validateRange(startAt: Date, endAt: Date) {
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
   constructor(
     private prisma: PrismaService,
     private sms: SmsService
@@ -108,9 +109,13 @@ export class BookingService {
       include: { table: true },
     });
 
-    void this.sms.sendToAdmin(
-      `📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`
-    );
+    void this.sms
+      .sendToAdmin(
+        `📅 New booking: ${created.table.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${created.customerName ? ` | ${created.customerName}` : ''}${created.customerPhone ? ` (${created.customerPhone})` : ''}`,
+      )
+      .then((r) => {
+        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
+      });
 
     return created;
   }
@@ -125,7 +130,11 @@ export class BookingService {
       include: { table: true },
     });
 
-    void this.sms.sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`);
+    void this.sms
+      .sendToAdmin(`❌ Booking cancelled: ${updated.table.name} ${updated.startAt.toISOString()} → ${updated.endAt.toISOString()}`)
+      .then((r) => {
+        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
+      });
 
     return updated;
   }
@@ -184,9 +193,13 @@ export class BookingService {
       },
     });
 
-    void this.sms.sendToAdmin(
-      `📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`
-    );
+    void this.sms
+      .sendToAdmin(
+        `📱 Guest booking: ${desk.name} ${created.startAt.toISOString()} → ${created.endAt.toISOString()}${dto.customerName ? ` | ${dto.customerName}` : ''}${dto.customerPhone ? ` (${dto.customerPhone})` : ''}`,
+      )
+      .then((r) => {
+        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
+      });
 
     return created;
   }

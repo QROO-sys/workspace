@@ -43,4 +43,12 @@ export class TableService {
     await this.findOne(id, tenantId);
     return this.prisma.table.update({ where: { id }, data: { deleted: true } });
   }
+
+  async bulkSetHourlyRate(tenantId: string, hourlyRate: number) {
+    const res = await this.prisma.table.updateMany({
+      where: { tenantId, deleted: false },
+      data: { hourlyRate },
+    });
+    return { updated: res.count };
+  }
 }

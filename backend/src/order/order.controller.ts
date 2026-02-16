@@ -36,6 +36,12 @@ export class OrderController {
   @Get()
   @UseGuards(JwtAuthGuard)
   async list(@Req() req: any) {
+    // Staff can see only today's orders (prevents reconstructing all-time revenue from the orders list).
+    if (req.user?.role === Role.STAFF) {
+      const since = new Date();
+      since.setHours(0, 0, 0, 0);
+      return this.service.listForTenantSince(req.user.tenantId, since);
+    }
     return this.service.listForTenant(req.user.tenantId);
   }
 

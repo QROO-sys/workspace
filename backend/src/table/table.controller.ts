@@ -28,6 +28,13 @@ export class TableController {
     return this.service.create(dto, req.user.tenantId);
   }
 
+  // Set a single hourly rate across ALL desks (sessions) for this tenant.
+  @Patch('bulk/hourly-rate')
+  @UseGuards(OwnerGuard)
+  async bulkHourlyRate(@Body() body: { hourlyRate: number }, @Req() req: any) {
+    return this.service.bulkSetHourlyRate(req.user.tenantId, Number(body?.hourlyRate));
+  }
+
   @Patch(':id')
   @UseGuards(OwnerGuard)
   async update(@Param('id') id: string, @Body() dto: UpdateTableDto, @Req() req: any) {

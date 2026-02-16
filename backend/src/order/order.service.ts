@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { CreateGuestOrderDto } from './dto';
 import { OrderStatus, RequestType } from '@prisma/client';
@@ -13,6 +13,7 @@ const SKU_COFFEE = '002';
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
   constructor(
     private prisma: PrismaService,
     private sms: SmsService
@@ -21,6 +22,17 @@ export class OrderService {
   async listForTenant(tenantId: string) {
     return this.prisma.order.findMany({
       where: { tenantId, deleted: false },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        table: true,
+        orderItems: { include: { menuItem: true } },
+      },
+    });
+  }
+
+  async listForTenantSince(tenantId: string, since: Date) {
+    return this.prisma.order.findMany({
+      where: { tenantId, deleted: false, createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
       include: {
         table: true,
@@ -211,9 +223,13 @@ export class OrderService {
       include: { table: true, orderItems: { include: { menuItem: true } } },
     });
 
-    void this.sms.sendToAdmin(
-      `🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`
-    );
+    void this.sms
+      .sendToAdmin(
+        `🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`,
+      )
+      .then((r) => {
+        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
+      });
 
     // Also add to the in-app "requests" queue for admin/staff.
     if (source === 'GUEST') {
