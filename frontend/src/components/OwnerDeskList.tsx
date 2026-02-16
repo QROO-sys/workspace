@@ -12,6 +12,7 @@ export default function OwnerDeskList({ desks }: { desks: Desk[] }) {
   const [name, setName] = useState("");
   const [laptopSerial, setLaptopSerial] = useState("");
   const [hourlyRate, setHourlyRate] = useState("100");
+  const [bulkRate, setBulkRate] = useState("100");
   const [serials, setSerials] = useState<Record<string, string>>(() => Object.fromEntries(desks.map(d => [d.id, d.laptopSerial || ""])));
   const [rates, setRates] = useState<Record<string, string>>(() => Object.fromEntries(desks.map(d => [d.id, String(d.hourlyRate ?? 100)])));
 
@@ -68,6 +69,28 @@ async function saveDesk(id: string) {
   } finally {
     setBusy(false);
   }
+
+  async function setAllRates() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const hr = Number(bulkRate || 0);
+      if (!Number.isFinite(hr) || hr < 0) {
+        setErr('Hourly rate must be a valid number.');
+        return;
+      }
+      await apiFetch(`/desks/bulk/hourly-rate`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hourlyRate: hr }),
+      });
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to update all rates');
+    } finally {
+      setBusy(false);
+    }
+  }
 }
 
   async function removeDesk(id: string) {
@@ -95,6 +118,25 @@ async function saveDesk(id: string) {
         </button>
       </form>
       {err && <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{err}</div>}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded border bg-white p-3">
+        <div className="text-sm font-medium">Set hourly rate for ALL desks</div>
+        <input
+          className="w-28 rounded border p-2 text-sm"
+          placeholder="EGP/hr"
+          value={bulkRate}
+          onChange={(e) => setBulkRate(e.target.value)}
+        />
+        <button
+          className="rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+          disabled={busy}
+          type="button"
+          onClick={setAllRates}
+        >
+          Apply
+        </button>
+        <div className="text-xs text-gray-600">This controls the session price used for “Extra hour”.</div>
+      </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {desks.map((d) => (

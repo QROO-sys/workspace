@@ -1,18 +1,28 @@
 import { serverApiFetch } from "@/lib/serverApi";
+import { cookies } from 'next/headers';
+import { normalizeLang, t } from '@/lib/i18n';
 
 function formatEGP(v: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v) + " EGP";
 }
 
 export default async function OwnerDashboardPage() {
-  const [desks, orders] = await Promise.all([
+  const lang = normalizeLang(cookies().get('lang')?.value);
+
+  const [me, desks, orders, revDaily] = await Promise.all([
+    serverApiFetch('/auth/me'),
     serverApiFetch("/desks"),
     serverApiFetch("/orders"),
+    serverApiFetch('/analytics/revenue/daily?days=1'),
   ]);
 
-  const revenue = (orders || [])
+  const isStaff = me?.role === 'STAFF';
+
+  const revenueAllTime = (orders || [])
     .filter((o: any) => o.status !== "CANCELLED")
     .reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+
+  const todayRevenue = (revDaily?.data?.[0]?.gross ?? 0) as number;
   const pending = (orders || []).filter((o: any) => o.status === "PENDING").length;
 
   return (
@@ -34,8 +44,8 @@ export default async function OwnerDashboardPage() {
           <div className="text-2xl font-bold">{pending}</div>
         </div>
         <div className="rounded border bg-white p-4">
-          <div className="text-sm text-gray-600">Total revenue (all time)</div>
-          <div className="text-2xl font-bold">{formatEGP(revenue)}</div>
+          <div className="text-sm text-gray-600">{isStaff ? t(lang, 'todayRevenue') : t(lang, 'totalRevenueAllTime')}</div>
+          <div className="text-2xl font-bold">{formatEGP(isStaff ? todayRevenue : revenueAllTime)}</div>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ function formatEGP(v: number) {
 export default async function OwnerAnalyticsPage({ searchParams }: { searchParams: { days?: string } }) {
   const days = Number(searchParams?.days || 30) || 30;
   const data = await serverApiFetch(`/analytics/revenue/daily?days=${encodeURIComponent(String(days))}`);
+  const hasTotals = !!data?.totals;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
@@ -22,16 +23,22 @@ export default async function OwnerAnalyticsPage({ searchParams }: { searchParam
         </form>
       </div>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
-        <div className="rounded border bg-white p-4">
-          <div className="text-sm text-gray-600">Gross (non-cancelled)</div>
-          <div className="text-2xl font-bold">{formatEGP(data?.totals?.gross || 0)}</div>
+      {hasTotals ? (
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <div className="rounded border bg-white p-4">
+            <div className="text-sm text-gray-600">Gross (non-cancelled)</div>
+            <div className="text-2xl font-bold">{formatEGP(data?.totals?.gross || 0)}</div>
+          </div>
+          <div className="rounded border bg-white p-4">
+            <div className="text-sm text-gray-600">Completed</div>
+            <div className="text-2xl font-bold">{formatEGP(data?.totals?.completed || 0)}</div>
+          </div>
         </div>
-        <div className="rounded border bg-white p-4">
-          <div className="text-sm text-gray-600">Completed</div>
-          <div className="text-2xl font-bold">{formatEGP(data?.totals?.completed || 0)}</div>
+      ) : (
+        <div className="mt-6 rounded border bg-white p-4 text-sm text-gray-700">
+          Staff view: totals are hidden. You can still view daily revenue below.
         </div>
-      </div>
+      )}
 
       <div className="mt-6 overflow-x-auto rounded border bg-white">
         <table className="w-full text-sm">
