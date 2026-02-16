@@ -2,7 +2,7 @@ import { BadRequestException, Controller, Post, Req, UseGuards } from '@nestjs/c
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OwnerGuard } from '../auth/owner.guard';
+import { OwnerGuard } from '../common/guards/owner.guard';
 
 const execFileAsync = promisify(execFile);
 

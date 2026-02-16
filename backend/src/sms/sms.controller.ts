@@ -1,6 +1,6 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OwnerGuard } from '../auth/owner.guard';
+import { OwnerGuard } from '../common/guards/owner.guard';
 import { SmsService } from './sms.service';
 
 @Controller('sms')
