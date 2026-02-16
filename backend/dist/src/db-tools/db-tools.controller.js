@@ -17,7 +17,7 @@ const common_1 = require("@nestjs/common");
 const node_child_process_1 = require("node:child_process");
 const node_util_1 = require("node:util");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
-const owner_guard_1 = require("../auth/owner.guard");
+const owner_guard_1 = require("../common/guards/owner.guard");
 const execFileAsync = (0, node_util_1.promisify)(node_child_process_1.execFile);
 let DbToolsController = class DbToolsController {
     ensureEnabled() {

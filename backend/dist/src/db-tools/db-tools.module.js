@@ -8,12 +8,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DbToolsModule = void 0;
 const common_1 = require("@nestjs/common");
+const auth_module_1 = require("../auth/auth.module");
 const db_tools_controller_1 = require("./db-tools.controller");
 let DbToolsModule = class DbToolsModule {
 };
 exports.DbToolsModule = DbToolsModule;
 exports.DbToolsModule = DbToolsModule = __decorate([
     (0, common_1.Module)({
+        imports: [auth_module_1.AuthModule],
         controllers: [db_tools_controller_1.DbToolsController],
     })
 ], DbToolsModule);
