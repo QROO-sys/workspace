@@ -31,7 +31,7 @@ async function bootstrap() {
   });
 
   const port = parseInt(process.env.PORT || '3001', 10);
-  await app.listen(port);
+  await app.listen(process.env.PORT || 3000);
   console.log(`Backend listening on http://localhost:${port}`);
 }
 bootstrap();
