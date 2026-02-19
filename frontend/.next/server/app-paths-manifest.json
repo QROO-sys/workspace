@@ -1,0 +1,23 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/lang/route": "app/api/lang/route.js",
+  "/checkout/page": "app/checkout/page.js",
+  "/api/auth/me/route": "app/api/auth/me/route.js",
+  "/d/[deskId]/page": "app/d/[deskId]/page.js",
+  "/d/[deskId]/book/page": "app/d/[deskId]/book/page.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
+  "/register/page": "app/register/page.js",
+  "/t/[tableId]/page": "app/t/[tableId]/page.js",
+  "/owner/analytics/page": "app/owner/analytics/page.js",
+  "/owner/menu/page": "app/owner/menu/page.js",
+  "/owner/requests/page": "app/owner/requests/page.js",
+  "/owner/menu-categories/page": "app/owner/menu-categories/page.js",
+  "/owner/db-tools/page": "app/owner/db-tools/page.js",
+  "/owner/dashboard/page": "app/owner/dashboard/page.js",
+  "/owner/sessions/page": "app/owner/sessions/page.js",
+  "/owner/sms/page": "app/owner/sms/page.js",
+  "/owner/users/page": "app/owner/users/page.js",
+  "/owner/desks/page": "app/owner/desks/page.js",
+  "/owner/bookings/page": "app/owner/bookings/page.js"
+}
