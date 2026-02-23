@@ -3,19 +3,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api";
-
-type Desk = {
-  id: string;
-  name?: string;
-  qrUrl?: string;
-  laptopSerial?: string;
-  hourlyRate?: number;
-  isActive?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-  // allow extra fields without breaking
-  [k: string]: any;
-};
+import type { Desk } from "@/components/OwnerDeskList";
 
 const OwnerDeskList = dynamic(() => import("@/components/OwnerDeskList"), {
   ssr: false,
@@ -39,19 +27,20 @@ export default function OwnerDashboardPage() {
         setErr(null);
         setLoading(true);
 
-        // Try common endpoints; keep whichever your API implements.
-        // 1) /owner/desks
-        // 2) /desks
-        // 3) /public/desks (fallback)
         const endpoints = ["/owner/desks", "/desks", "/public/desks"];
 
         let lastError: any = null;
+
         for (const ep of endpoints) {
           try {
             const res = await apiFetch(ep, { method: "GET" });
+
+            // API might return an array or { desks: [...] }
             const items = Array.isArray(res) ? res : res?.desks;
+
             if (Array.isArray(items)) {
-              if (alive) setDesks(items);
+              // We trust API shape matches Desk; if not, you'll see runtime issues
+              if (alive) setDesks(items as Desk[]);
               lastError = null;
               break;
             }
@@ -90,8 +79,8 @@ export default function OwnerDashboardPage() {
           <div className="font-semibold mb-2">Dashboard error</div>
           <div className="text-sm text-red-700 break-words">{err}</div>
           <div className="mt-3 text-sm text-gray-600">
-            If you just logged in, make sure your JWT is stored and your API
-            accepts it (Authorization: Bearer ...).
+            If you just logged in, ensure your JWT is stored and sent as an
+            Authorization header on API requests.
           </div>
         </div>
       </div>
