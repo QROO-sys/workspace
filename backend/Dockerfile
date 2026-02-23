@@ -45,4 +45,4 @@ COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 EXPOSE 3000
 
 # ✅ This is the missing piece
-CMD ["sh", "-c", "echo '=== /app contents ===' && ls -la /app && echo '=== /app/dist contents ===' && ls -la /app/dist || true; echo '=== find main.js ===' && find /app -maxdepth 5 -name main.js -print; node /app/dist/main.js || node /app/dist/src/main.js"]
+CMD ["sh", "-c", "npx prisma db push --schema prisma/schema.prisma && node /app/dist/main.js"]
