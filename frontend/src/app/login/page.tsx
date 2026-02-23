@@ -31,15 +31,17 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await apiFetch("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
-        credentials: "include",
-      });
+const res = await apiFetch("/auth/login", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: email.trim(), password }),
+});
 
-      console.log("[login] success:", res);
-      router.replace(safeFrom);
+if (res?.access_token) {
+  localStorage.setItem("access_token", res.access_token);
+}
+
+router.replace(safeFrom);
     } catch (e: any) {
       console.error("[login] error:", e);
       setErr(e?.message || "Login failed");

@@ -12,7 +12,13 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const res = await fetch(url, {
     ...init,
     credentials: "include", // safe even if you don't use cookies
-  });
+const token =
+  typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+
+const headers = new Headers(init.headers || {});
+if (token) headers.set("Authorization", `Bearer ${token}`);
+
+const res = await fetch(url, { ...init, headers });
 
   const text = await res.text();
   let data: any = null;
