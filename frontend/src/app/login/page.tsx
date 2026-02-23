@@ -84,14 +84,14 @@ export default function LoginPage() {
           </div>
         )}
 
-        <button
-          className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
-          disabled={loading}
-          type="submit"
-        >
-          {loading ? "..." : t(lang, "login")}
-        </button>
-      </form>
+<button
+  className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
+  disabled={loading}
+  type="submit"
+  onClick={() => alert("LOGIN BUTTON CLICKED")}
+>
+  {loading ? "..." : t(lang, "login")}
+</button>      </form>
 
       <div className="mt-4 text-sm text-gray-700">
         No account?{" "}
