@@ -4,17 +4,6 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api";
 
-// Minimal shape that OwnerDeskList expects.
-// Critical: name must be a string (not optional).
-type Desk = {
-  id: string;
-  name: string;
-  qrUrl?: string | null;
-  laptopSerial?: string | null;
-  hourlyRate?: number | null;
-  [k: string]: any;
-};
-
 const OwnerDeskList = dynamic(() => import("@/components/OwnerDeskList"), {
   ssr: false,
   loading: () => (
@@ -24,29 +13,34 @@ const OwnerDeskList = dynamic(() => import("@/components/OwnerDeskList"), {
   ),
 });
 
-function normalizeDesk(raw: any, idx: number): Desk | null {
-  if (!raw) return null;
-
-  const id = String(raw.id || raw._id || "");
+// Normalize API data into what OwnerDeskList expects.
+// Key requirements from build errors:
+// - name must be string
+// - qrUrl must be string
+function normalizeDesk(raw: any, idx: number) {
+  const id = String(raw?.id || raw?._id || "");
   if (!id) return null;
 
   const name =
-    typeof raw.name === "string" && raw.name.trim()
+    typeof raw?.name === "string" && raw.name.trim()
       ? raw.name.trim()
       : `Desk ${idx + 1}`;
+
+  const qrUrl =
+    typeof raw?.qrUrl === "string" && raw.qrUrl.trim()
+      ? raw.qrUrl.trim()
+      : `${window.location.origin}/d/${id}`;
 
   return {
     ...raw,
     id,
     name,
-    qrUrl: raw.qrUrl ?? raw.qr_url ?? null,
-    laptopSerial: raw.laptopSerial ?? raw.laptop_serial ?? null,
-    hourlyRate: raw.hourlyRate ?? raw.hourly_rate ?? null,
+    qrUrl,
   };
 }
 
 export default function OwnerDashboardPage() {
-  const [desks, setDesks] = useState<Desk[]>([]);
+  const [desks, setDesks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -70,7 +64,7 @@ export default function OwnerDashboardPage() {
             if (Array.isArray(items)) {
               const normalized = items
                 .map((x, i) => normalizeDesk(x, i))
-                .filter(Boolean) as Desk[];
+                .filter(Boolean);
 
               if (alive) setDesks(normalized);
               lastError = null;
@@ -115,6 +109,5 @@ export default function OwnerDashboardPage() {
     );
   }
 
-  // OwnerDeskList expects desks prop.
   return <OwnerDeskList desks={desks} />;
 }
