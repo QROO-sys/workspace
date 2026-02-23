@@ -1,17 +1,36 @@
-export async function apiFetch(path: string, options?: RequestInit) {
-  const base = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:3001" : ""));
-  if (!base) throw new Error("NEXT_PUBLIC_API_URL is not set"); 
-  const res = await fetch(`${base}${path}`, {
-    ...options,
-    credentials: "include",
+const base =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "development" ? "http://localhost:3001" : "");
+
+if (!base) throw new Error("NEXT_PUBLIC_API_URL is not set");
+
+export async function apiFetch(path: string, init: RequestInit = {}) {
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+
+  console.log("[apiFetch]", init.method || "GET", url);
+
+  const res = await fetch(url, {
+    ...init,
+    credentials: "include", // safe even if you don't use cookies
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
 
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return res.json();
-  return res.text();
+  console.log("[apiFetch] status", res.status, data);
+
+  if (!res.ok) {
+    const msg =
+      (data && (data.message || data.error)) ||
+      (typeof data === "string" ? data : "") ||
+      `Request failed: ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return data;
 }
