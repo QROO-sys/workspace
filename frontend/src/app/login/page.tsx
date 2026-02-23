@@ -25,14 +25,16 @@ export default function LoginPage() {
     e.preventDefault();
     console.log("LOGIN SUBMIT FIRED");
     alert("Login submit fired");
-  // ...rest of your code
-}
+
+    setErr(null);
+    setLoading(true);
 
     try {
       await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
+        credentials: "include",
       });
 
       router.replace(from);
