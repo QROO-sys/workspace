@@ -1,19 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-export function middleware(req: NextRequest) {
-  const { pathname, search } = req.nextUrl;
-
-  if (!pathname.startsWith('/owner')) return NextResponse.next();
-
-  const token = req.cookies.get('access_token')?.value;
-  if (token) return NextResponse.next();
-
-  const url = req.nextUrl.clone();
-  url.pathname = '/login';
-  url.searchParams.set('from', `${pathname}${search || ''}`);
-  return NextResponse.redirect(url);
+// Pass-through middleware.
+// Auth is handled client-side (localStorage JWT) under /owner layout.
+// Middleware runs server-side and cannot read localStorage.
+export function middleware(_req: NextRequest) {
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/owner/:path*'],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+  ],
 };
