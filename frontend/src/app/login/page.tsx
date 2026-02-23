@@ -5,6 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { normalizeLang, t, type Lang } from "@/lib/i18n";
 
+type LoginResponse = {
+  ok?: boolean;
+  access_token?: string;
+  [k: string]: any;
+};
+
 export default function LoginPage() {
   const params = useSearchParams();
 
@@ -15,6 +21,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [lang, setLang] = useState<Lang>("en");
@@ -26,33 +33,48 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
     setErr(null);
+    setInfo(null);
     setLoading(true);
 
     try {
-      const res = await apiFetch("/auth/login", {
+      const res = (await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
-      });
+      })) as LoginResponse;
 
-      // Persist token (your API returns access_token)
-      if (typeof window !== "undefined" && res?.access_token) {
-        localStorage.setItem("access_token", res.access_token);
+      // Show what we got back (helps confirm success/failure)
+      setInfo(`Login response: ${JSON.stringify(res)}`);
+
+      const token = res?.access_token;
+      if (!token) {
+        throw new Error("Login succeeded but no access_token was returned.");
       }
 
-      // Hard redirect (more reliable than router.replace if anything is odd)
+      localStorage.setItem("access_token", token);
+
+      // Hard redirect (most reliable)
       window.location.assign(safeFrom);
+      return;
     } catch (e: any) {
+      const msg =
+        e?.message ||
+        (typeof e === "string" ? e : "") ||
+        "Login failed (unknown error)";
       console.error("[login] error:", e);
-      setErr(e?.message || "Login failed");
+      setErr(msg);
+    } finally {
       setLoading(false);
     }
   }
 
   return (
     <div className="max-w-sm mx-auto mt-24 p-6 rounded shadow bg-white">
-      <div className="mb-3 text-xs text-gray-500">login-build: 2026-02-23-final</div>
+      <div className="mb-3 text-xs text-gray-500">
+        login-build: 2026-02-23-prodfix
+      </div>
 
       <div className="font-bold text-2xl mb-4">{t(lang, "signIn")}</div>
 
@@ -88,6 +110,12 @@ export default function LoginPage() {
         {err && (
           <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
             {err}
+          </div>
+        )}
+
+        {info && !err && (
+          <div className="mb-3 text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 break-all">
+            {info}
           </div>
         )}
 
