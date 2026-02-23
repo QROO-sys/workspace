@@ -1,18 +1,14 @@
-import React, { useEffect } from "react";
+import React from "react";
 
+/**
+ * Temporary safe wrapper:
+ * Does NOT use hooks, window, localStorage, or navigation.
+ * Use /owner/layout.tsx client guard for auth gating.
+ */
 export default function withAuth<P extends object>(
   Component: React.ComponentType<P>
 ) {
-  const Wrapped: React.FC<P> = (props) => {
-    useEffect(() => {
-      // keep your existing auth logic here
-      // (redirect, token check, etc.)
-    }, []);
-
+  return function WithAuth(props: P) {
     return <Component {...props} />;
   };
-
-  Wrapped.displayName = `withAuth(${Component.displayName || Component.name || "Component"})`;
-  return Wrapped;
 }
-
