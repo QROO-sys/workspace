@@ -23,8 +23,10 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setErr(null);
-    setLoading(true);
+    console.log("LOGIN SUBMIT FIRED");
+    alert("Login submit fired");
+  // ...rest of your code
+}
 
     try {
       await apiFetch("/auth/login", {
