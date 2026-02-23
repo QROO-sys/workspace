@@ -31,15 +31,17 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await apiFetch("/auth/login", {
+      const res = await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
         credentials: "include",
       });
 
+      console.log("[login] success:", res);
       router.replace(safeFrom);
     } catch (e: any) {
+      console.error("[login] error:", e);
       setErr(e?.message || "Login failed");
     } finally {
       setLoading(false);
@@ -48,7 +50,10 @@ export default function LoginPage() {
 
   return (
     <div className="max-w-sm mx-auto mt-24 p-6 rounded shadow bg-white">
-      <h1 className="font-bold text-2xl mb-4">{t(lang, "signIn")}</h1>
+      {/* build stamp: if you don't see this, you're not on the new deployment */}
+      <div className="mb-3 text-xs text-gray-500">login-build: 2026-02-23-debug</div>
+
+      <div className="font-bold text-2xl mb-4">{t(lang, "signIn")}</div>
 
       <form onSubmit={onSubmit}>
         <label className="block text-sm mb-1" htmlFor="email">
@@ -89,6 +94,7 @@ export default function LoginPage() {
           className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
           disabled={loading}
           type="submit"
+          onClick={() => alert("LOGIN BUTTON CLICKED")}
         >
           {loading ? "..." : t(lang, "login")}
         </button>
