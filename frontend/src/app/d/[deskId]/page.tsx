@@ -1,7 +1,7 @@
 import DeskCheckinClient from "@/components/DeskCheckinClient";
 
 export default async function DeskPage({ params }: { params: { deskId: string } }) {
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+  const apiBase = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:3001" : ""));
 
   const deskRes = await fetch(`${apiBase}/public/desks/${params.deskId}`, { cache: "no-store" });
 

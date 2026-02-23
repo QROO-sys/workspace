@@ -111,7 +111,7 @@ export default function DeskCheckinClient({
       const fd = new FormData();
       fd.append("file", idFile);
 
-      const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const base = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:3001" : ""));
       const res = await fetch(`${base}/public/uploads/national-id`, {
         method: "POST",
         body: fd,

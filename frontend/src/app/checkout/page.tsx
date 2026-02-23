@@ -16,7 +16,7 @@ export default async function CheckoutPage({ searchParams }: { searchParams: { o
     );
   }
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+  const apiBase = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:3001" : ""));
   const res = await fetch(`${apiBase}/public/orders/${orderId}`, { cache: "no-store" });
 
   if (!res.ok) {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 export async function GET(req: Request) {
-  const base = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const base = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : ''));
   const cookie = req.headers.get('cookie') || '';
 
   const r = await fetch(`${base}/auth/me`, {
