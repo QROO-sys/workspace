@@ -8,12 +8,16 @@ import { normalizeLang, t, type Lang } from "@/lib/i18n";
 export default function LoginPage() {
   const router = useRouter();
   const params = useSearchParams();
-  const from = params.get("from") || "/owner/dashboard";
+
+  const fromParam = params.get("from") || "/owner/dashboard";
+  const safeFrom = fromParam.startsWith("/") ? fromParam : "/owner/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
   const [lang, setLang] = useState<Lang>("en");
 
   useEffect(() => {
@@ -23,9 +27,6 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    console.log("LOGIN SUBMIT FIRED");
-    alert("Login submit fired");
-
     setErr(null);
     setLoading(true);
 
@@ -33,11 +34,11 @@ export default function LoginPage() {
       await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
         credentials: "include",
       });
 
-      router.replace(from);
+      router.replace(safeFrom);
     } catch (e: any) {
       setErr(e?.message || "Login failed");
     } finally {
@@ -84,14 +85,14 @@ export default function LoginPage() {
           </div>
         )}
 
-<button
-  className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
-  disabled={loading}
-  type="submit"
-  onClick={() => alert("LOGIN BUTTON CLICKED")}
->
-  {loading ? "..." : t(lang, "login")}
-</button>      </form>
+        <button
+          className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
+          disabled={loading}
+          type="submit"
+        >
+          {loading ? "..." : t(lang, "login")}
+        </button>
+      </form>
 
       <div className="mt-4 text-sm text-gray-700">
         No account?{" "}
