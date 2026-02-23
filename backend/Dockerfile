@@ -25,6 +25,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Prevent postinstall from running in runtime stage
 # (we already generated prisma client in build)
@@ -45,4 +47,4 @@ COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 EXPOSE 3000
 
 # ✅ This is the missing piece
-CMD ["sh", "-c", "npx prisma db push --schema prisma/schema.prisma && node /app/dist/main.js"]
+CMD ["/app/entrypoint.sh"]
