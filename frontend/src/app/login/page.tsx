@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { normalizeLang, t, type Lang } from "@/lib/i18n";
 
 export default function LoginPage() {
-  const router = useRouter();
   const params = useSearchParams();
 
   const fromParam = params.get("from") || "/owner/dashboard";
@@ -31,29 +30,29 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-const res = await apiFetch("/auth/login", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email: email.trim(), password }),
-});
+      const res = await apiFetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
 
-if (res?.access_token) {
-  localStorage.setItem("access_token", res.access_token);
-}
+      // Persist token (your API returns access_token)
+      if (typeof window !== "undefined" && res?.access_token) {
+        localStorage.setItem("access_token", res.access_token);
+      }
 
-router.replace(safeFrom);
+      // Hard redirect (more reliable than router.replace if anything is odd)
+      window.location.assign(safeFrom);
     } catch (e: any) {
       console.error("[login] error:", e);
       setErr(e?.message || "Login failed");
-    } finally {
       setLoading(false);
     }
   }
 
   return (
     <div className="max-w-sm mx-auto mt-24 p-6 rounded shadow bg-white">
-      {/* build stamp: if you don't see this, you're not on the new deployment */}
-      <div className="mb-3 text-xs text-gray-500">login-build: 2026-02-23-debug</div>
+      <div className="mb-3 text-xs text-gray-500">login-build: 2026-02-23-final</div>
 
       <div className="font-bold text-2xl mb-4">{t(lang, "signIn")}</div>
 
@@ -96,9 +95,8 @@ router.replace(safeFrom);
           className="w-full py-2 bg-blue-600 text-white rounded disabled:opacity-60"
           disabled={loading}
           type="submit"
-          onClick={() => alert("LOGIN BUTTON CLICKED")}
         >
-          {loading ? "..." : t(lang, "login")}
+          {loading ? "Signing in..." : t(lang, "login")}
         </button>
       </form>
 
