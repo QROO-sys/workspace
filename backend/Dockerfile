@@ -25,16 +25,16 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
 
 # Prevent postinstall from running in runtime stage
-# (we already generated prisma client in build)
 ENV npm_config_ignore_scripts=true
 
 # Install prod deps only
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+
+# Ensure Prisma CLI is available for db push (works even if prisma is devDependency)
+RUN npm i -g prisma@5.22.0
 
 # Copy compiled app + prisma artifacts from build stage
 COPY --from=build /app/dist ./dist
@@ -43,8 +43,9 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
-# Your app must listen on process.env.PORT inside main.ts
-EXPOSE 3000
+# Copy entrypoint last (so edits don't bust npm cache)
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-# ✅ This is the missing piece
+EXPOSE 3000
 CMD ["/app/entrypoint.sh"]
