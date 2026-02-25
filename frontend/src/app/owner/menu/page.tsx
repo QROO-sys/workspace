@@ -1,321 +1,292 @@
-"use client";
+k'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import QRCode from "react-qr-code";
-import { apiFetch } from "@/lib/api";
+import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '@/lib/api';
 
-type Category = { id: string; name: string };
-type Item = { id: string; name: string; sku: string; price: number; categoryId?: string };
-type Desk = { id: string; name: string };
+type DeskLike = {
+  id: string;
+  name?: string | null;
+};
 
-function money(n: any) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return "0";
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
+type MenuItem = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  // backend schema varies; we only display if present
+  price?: number | null;
+  priceEgp?: number | null;
+  priceEGP?: number | null;
+  unitPrice?: number | null;
+};
+
+function priceOf(mi: any) {
+  return (
+    mi?.priceEgp ??
+    mi?.priceEGP ??
+    mi?.unitPrice ??
+    mi?.price ??
+    null
+  );
 }
 
 export default function OwnerMenuPage() {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-
-  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [desks, setDesks] = useState<Desk[]>([]);
-  const [deskId, setDeskId] = useState<string>("");
-
-  const [activeCatId, setActiveCatId] = useState<string>("ALL");
-  const [cart, setCart] = useState<Record<string, number>>({});
-  const [note, setNote] = useState<string>("");
-
-  // Only needed if cart includes EXTRA_HOUR
-  const [customerName, setCustomerName] = useState<string>("");
-  const [customerPhone, setCustomerPhone] = useState<string>("");
-
+  const [okMsg, setOkMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const handledAddRef = useRef<string>("");
+  // Toggle: counter order means NOT tied to desk/table
+  const [counterOrder, setCounterOrder] = useState<boolean>(true);
 
-  async function load() {
-    setErr(null);
-    setLoading(true);
-    try {
-      const [catRes, itemRes, deskRes] = await Promise.all([
-        apiFetch("/menu-categories", { method: "GET" }).catch(() => []),
-        apiFetch("/menu-items", { method: "GET" }),
-        apiFetch("/desks", { method: "GET" }),
-      ]);
+  // For desk/table orders (optional)
+  const [selectedDeskId, setSelectedDeskId] = useState<string>('');
 
-      const catArr = Array.isArray(catRes) ? catRes : (catRes as any)?.categories || [];
-      const itemArr = Array.isArray(itemRes) ? itemRes : (itemRes as any)?.menuItems || (itemRes as any)?.items || [];
-      const deskArr = Array.isArray(deskRes) ? deskRes : (deskRes as any)?.desks || [];
+  const [desks, setDesks] = useState<DeskLike[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
-      const normCats: Category[] = (catArr as any[])
-        .map((c: any) => ({ id: String(c?.id ?? ""), name: String(c?.name ?? "") }))
-        .filter((c: Category) => Boolean(c.id && c.name));
+  // Simple cart: menuItemId -> quantity
+  const [cart, setCart] = useState<Record<string, number>>({});
 
-      const normItems: Item[] = (itemArr as any[])
-        .map((m: any) => ({
-          id: String(m?.id ?? ""),
-          name: String(m?.name ?? ""),
-          sku: String(m?.sku ?? ""),
-          price: Number(m?.price ?? 0),
-          categoryId: String(m?.categoryId ?? m?.category?.id ?? ""),
-        }))
-        .filter((i: Item) => Boolean(i.id && i.name));
-
-      const normDesks: Desk[] = (deskArr as any[])
-        .map((d: any, idx: number) => ({ id: String(d?.id ?? ""), name: String(d?.name ?? `Desk ${idx + 1}`) }))
-        .filter((d: Desk) => Boolean(d.id));
-
-      setCategories(normCats);
-      setItems(normItems);
-      setDesks(normDesks);
-      if (!deskId && normDesks.length) setDeskId(normDesks[0].id);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load menu");
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // Load desks + menu items (best-effort endpoints)
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+
+    (async () => {
+      setErr(null);
+      try {
+        // Try common endpoints; your project already has owner desks + menu pages
+        const [desksRes, menuRes] = await Promise.allSettled([
+          apiFetch('/desks', { method: 'GET' }),
+          apiFetch('/menu-items', { method: 'GET' }),
+        ]);
+
+        if (!cancelled) {
+          if (desksRes.status === 'fulfilled' && Array.isArray(desksRes.value)) {
+            setDesks(desksRes.value);
+          } else {
+            // fallback: some projects use /tables; keep as fallback to allow selection if needed
+            const tables = await apiFetch('/tables', { method: 'GET' }).catch(() => []);
+            if (Array.isArray(tables)) setDesks(tables);
+          }
+
+          if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value)) {
+            setMenuItems(menuRes.value);
+          } else {
+            // fallback: some projects use /menu
+            const menu = await apiFetch('/menu', { method: 'GET' }).catch(() => []);
+            if (Array.isArray(menu)) setMenuItems(menu);
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || 'Failed to load menu/desks');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Auto-add item from QR: /owner/menu?add=<itemId>
-  useEffect(() => {
-    if (!items.length) return;
-    if (typeof window === "undefined") return;
-
-    const add = new URLSearchParams(window.location.search).get("add") || "";
-    if (!add) return;
-    if (handledAddRef.current === add) return;
-
-    const exists = items.find((x) => x.id === add);
-    if (!exists) return;
-
-    handledAddRef.current = add;
-    setCart((c) => ({ ...c, [add]: (c[add] || 0) + 1 }));
-  }, [items]);
-
-  const filteredItems = useMemo(() => {
-    if (activeCatId === "ALL") return items;
-    return items.filter((i) => i.categoryId === activeCatId);
-  }, [items, activeCatId]);
-
   const cartLines = useMemo(() => {
-    const byId = new Map(items.map((i) => [i.id, i]));
+    const byId = new Map(menuItems.map((m) => [m.id, m]));
     return Object.entries(cart)
-      .map(([id, qty]) => {
-        const item = byId.get(id);
-        if (!item) return null;
-        return { item, qty, total: item.price * qty };
-      })
-      .filter(Boolean) as Array<{ item: Item; qty: number; total: number }>;
-  }, [cart, items]);
+      .filter(([, qty]) => qty > 0)
+      .map(([id, qty]) => ({ item: byId.get(id), id, qty }));
+  }, [cart, menuItems]);
 
-  const cartTotal = useMemo(() => cartLines.reduce((a, l) => a + l.total, 0), [cartLines]);
+  const totalEstimate = useMemo(() => {
+    // backend computes authoritative total, but we show an estimate if prices exist
+    let total = 0;
+    for (const line of cartLines) {
+      const p = priceOf(line.item);
+      if (typeof p === 'number') total += p * line.qty;
+    }
+    return total;
+  }, [cartLines]);
 
-  const hasExtraHour = useMemo(
-    () => cartLines.some((l) => String(l.item.sku || "").toUpperCase() === "EXTRA_HOUR"),
-    [cartLines]
-  );
-
-  function addItem(id: string) {
-    setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
+  function inc(id: string) {
+    setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   }
-  function removeItem(id: string) {
-    setCart((c) => {
-      const next = { ...c };
-      const q = (next[id] || 0) - 1;
-      if (q <= 0) delete next[id];
-      else next[id] = q;
-      return next;
+
+  function dec(id: string) {
+    setCart((prev) => {
+      const cur = prev[id] || 0;
+      const next = Math.max(0, cur - 1);
+      return { ...prev, [id]: next };
     });
   }
 
-  async function submitOrder() {
+  function clearCart() {
+    setCart({});
+  }
+
+  async function checkout() {
     setErr(null);
+    setOkMsg(null);
 
-    if (!deskId) return setErr("Select a desk first.");
-    if (!cartLines.length) return setErr("Cart is empty.");
+    const items = cartLines.map((l) => ({
+      menuItemId: l.id,
+      // IMPORTANT: backend expects quantity (not qty); it will also accept qty but we send quantity to be safe
+      quantity: l.qty,
+    }));
 
-    // ✅ only require customer details if EXTEND TIME is included
-    if (hasExtraHour) {
-      if (!customerName.trim() || !customerPhone.trim()) {
-        return setErr("Customer name and phone are required for Extend time.");
-      }
+    if (items.length === 0) {
+      setErr('Cart is empty.');
+      return;
+    }
+
+    // If not counter order, require desk/table selection
+    if (!counterOrder && !selectedDeskId) {
+      setErr('Select a desk/table or switch to Counter Order.');
+      return;
     }
 
     setBusy(true);
     try {
-      await apiFetch("/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tableId: deskId,
-          notes: note || "",
-          paymentMethod: "CASH",
-          paymentStatus: "PENDING",
-          customerName: hasExtraHour ? customerName.trim() : undefined,
-          customerPhone: hasExtraHour ? customerPhone.trim() : undefined,
-          items: cartLines.map((l) => ({ menuItemId: l.item.id, quantity: l.qty })),
-        }),
+      const payload: any = {
+        counterOrder: !!counterOrder,
+        items,
+      };
+
+      // When NOT counter order, attach desk/table id.
+      // Your backend supports both tableId and deskId; your tenant seems table-based, so we send tableId.
+      if (!counterOrder) {
+        payload.tableId = selectedDeskId;
+      }
+
+      // Staff should NOT need laptop agreement; backend skips for OWNER/ADMIN/EMPLOYEE.
+
+      const created = await apiFetch('/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       });
 
-      setCart({});
-      setNote("");
-      setCustomerName("");
-      setCustomerPhone("");
-      alert("Order created.");
+      setOkMsg(`Order created: ${created?.order?.id || 'OK'}`);
+      clearCart();
     } catch (e: any) {
-      setErr(e?.message || "Order failed");
+      setErr(e?.message || 'Order could not be created');
     } finally {
       setBusy(false);
     }
   }
 
-  if (loading) return <div className="text-sm text-gray-600">Loading menu…</div>;
-
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-2xl font-bold">Menu</div>
-          <div className="text-sm text-gray-600">Click tiles or scan item QRs to add to cart.</div>
-        </div>
-        <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={load} type="button">
-          Refresh
-        </button>
-      </div>
+    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
+      <h1 style={{ marginTop: 0 }}>Menu Orders</h1>
 
       {err && (
-        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{err}</div>
+        <div style={{ border: '1px solid #f2c2c2', background: '#fff5f5', padding: 12, borderRadius: 10, marginBottom: 12 }}>
+          <b>Error:</b> {err}
+        </div>
+      )}
+      {okMsg && (
+        <div style={{ border: '1px solid #bfe3bf', background: '#f4fff4', padding: 12, borderRadius: 10, marginBottom: 12 }}>
+          {okMsg}
+        </div>
       )}
 
-      <div className="rounded border bg-white p-4 space-y-3">
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm">
-            Desk (required)
-            <select className="mt-1 w-full rounded border p-2" value={deskId} onChange={(e) => setDeskId(e.target.value)}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={counterOrder}
+            onChange={(e) => setCounterOrder(e.target.checked)}
+          />
+          Counter Order (no desk/table)
+        </label>
+
+        {!counterOrder && (
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            Desk/Table:
+            <select
+              value={selectedDeskId}
+              onChange={(e) => setSelectedDeskId(e.target.value)}
+              style={{ padding: 8 }}
+            >
+              <option value="">Select…</option>
               {desks.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name}
+                  {d.name || d.id.slice(0, 8)}
                 </option>
               ))}
             </select>
           </label>
-
-          <label className="block text-sm">
-            Notes (optional)
-            <input className="mt-1 w-full rounded border p-2" value={note} onChange={(e) => setNote(e.target.value)} />
-          </label>
-        </div>
-
-        {hasExtraHour && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">
-              Customer name (required for Extend time)
-              <input className="mt-1 w-full rounded border p-2" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
-            </label>
-            <label className="block text-sm">
-              Customer phone (required for Extend time)
-              <input className="mt-1 w-full rounded border p-2" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
-            </label>
-          </div>
         )}
       </div>
 
-      {/* Categories */}
-      <div className="space-y-2">
-        <div className="text-sm font-semibold">Categories</div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveCatId("ALL")}
-            className={"rounded border px-3 py-2 text-sm " + (activeCatId === "ALL" ? "bg-gray-900 text-white" : "hover:bg-gray-50")}
-          >
-            All
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setActiveCatId(c.id)}
-              className={"rounded border px-3 py-2 text-sm " + (activeCatId === c.id ? "bg-gray-900 text-white" : "hover:bg-gray-50")}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Items with QR */}
-      <div className="space-y-2">
-        <div className="text-sm font-semibold">Items</div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredItems.map((i) => {
-            const qrValue = `${origin}/owner/menu?add=${encodeURIComponent(i.id)}`;
-            return (
-              <div key={i.id} className="rounded border bg-white p-4">
-                <button type="button" className="w-full text-left hover:opacity-90" onClick={() => addItem(i.id)}>
-                  <div className="font-semibold">{i.name}</div>
-                  <div className="text-xs text-gray-600 mt-1">SKU: {i.sku}</div>
-                  <div className="text-sm mt-2">{money(i.price)} EGP</div>
-                  <div className="text-xs text-gray-500 mt-1">Click to add</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        {/* Menu */}
+        <div>
+          <h2 style={{ marginTop: 0 }}>Items</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            {menuItems.map((mi) => (
+              <div key={mi.id} style={{ border: '1px solid #eee', padding: 12, borderRadius: 12 }}>
+                <div style={{ fontWeight: 700 }}>{mi.name}</div>
+                <div style={{ opacity: 0.7 }}>{mi.sku || ''}</div>
+                <div style={{ marginTop: 8 }}>
+                  {typeof priceOf(mi) === 'number' ? `${priceOf(mi)} EGP` : <span style={{ opacity: 0.6 }}>Price</span>}
+                </div>
+                <button onClick={() => inc(mi.id)} style={{ marginTop: 10, padding: '8px 12px' }}>
+                  Add
                 </button>
-
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="rounded bg-gray-50 p-2">
-                    <QRCode value={qrValue} size={80} />
-                  </div>
-                  <div className="text-xs text-gray-600 break-all">
-                    QR: <span className="font-mono">{qrValue}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {!filteredItems.length && <div className="text-sm text-gray-600">No items for this category.</div>}
-        </div>
-      </div>
-
-      {/* Cart */}
-      <div className="rounded border bg-white p-4 space-y-2">
-        <div className="font-semibold">Cart</div>
-
-        {cartLines.length ? (
-          <div className="space-y-2">
-            {cartLines.map((l) => (
-              <div key={l.item.id} className="flex items-center justify-between">
-                <div className="text-sm">
-                  {l.item.name} × {l.qty}
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-sm">{money(l.total)} EGP</div>
-                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => removeItem(l.item.id)}>
-                    -
-                  </button>
-                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => addItem(l.item.id)}>
-                    +
-                  </button>
-                </div>
               </div>
             ))}
-            <div className="border-t pt-2 text-sm font-semibold">Total: {money(cartTotal)} EGP</div>
           </div>
-        ) : (
-          <div className="text-sm text-gray-600">Cart is empty.</div>
-        )}
+        </div>
 
-        <button className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60" disabled={busy} onClick={submitOrder} type="button">
-          {busy ? "Submitting…" : "Create Order (Cash Pending)"}
-        </button>
+        {/* Cart */}
+        <div>
+          <h2 style={{ marginTop: 0 }}>Cart</h2>
+
+          {cartLines.length === 0 ? (
+            <div style={{ opacity: 0.7 }}>No items yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {cartLines.map((l) => (
+                <div key={l.id} style={{ border: '1px solid #eee', padding: 10, borderRadius: 12 }}>
+                  <div style={{ fontWeight: 700 }}>{l.item?.name || l.id}</div>
+                  <div style={{ opacity: 0.75 }}>{l.item?.sku || ''}</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                    <button onClick={() => dec(l.id)} style={{ padding: '6px 10px' }}>
+                      -
+                    </button>
+                    <div style={{ minWidth: 30, textAlign: 'center' }}>{l.qty}</div>
+                    <button onClick={() => inc(l.id)} style={{ padding: '6px 10px' }}>
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{ borderTop: '1px solid #eee', paddingTop: 10 }}>
+                <div style={{ fontWeight: 800 }}>Estimate: {totalEstimate} EGP</div>
+                <div style={{ opacity: 0.7, marginTop: 4 }}>
+                  Backend calculates final total.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={checkout} disabled={busy} style={{ padding: '10px 14px' }}>
+                  {busy ? 'Creating…' : 'Checkout'}
+                </button>
+                <button onClick={clearCart} disabled={busy} style={{ padding: '10px 14px' }}>
+                  Clear
+                </button>
+              </div>
+
+              {!counterOrder && (
+                <div style={{ marginTop: 6, opacity: 0.75 }}>
+                  Desk/Table orders will be attached to the selected desk/table.
+                </div>
+              )}
+
+              {counterOrder && (
+                <div style={{ marginTop: 6, opacity: 0.75 }}>
+                  Counter orders are not tied to any desk/table. EXTRA_HOUR will be blocked.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
