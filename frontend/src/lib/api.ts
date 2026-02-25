@@ -7,17 +7,13 @@ if (!base) throw new Error("NEXT_PUBLIC_API_URL is not set");
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
 
-  // Build headers (and attach JWT if present)
   const headers = new Headers(init.headers || {});
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("access_token");
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(url, {
-    ...init,
-    headers,
-  });
+  const res = await fetch(url, { ...init, headers });
 
   const text = await res.text();
   let data: any = null;

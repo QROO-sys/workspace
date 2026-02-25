@@ -53,8 +53,10 @@ export default function OwnerLayout({ children }: { children: React.ReactNode })
             <NavItem href="/owner/desks" label="Desks" />
             <NavItem href="/owner/menu" label="Menu & SKUs" />
             <NavItem href="/owner/bookings" label="Bookings" />
-            <NavItem href="/owner/orders" label="Orders" />
-            <NavItem href="/owner/revenue" label="Revenue" />
+            <NavItem href="/owner/sessions" label="Sessions (Occupancy)" />
+            <NavItem href="/owner/orders" label="Orders Queue" />
+            <NavItem href="/owner/revenue" label="Revenue (Daily)" />
+            <NavItem href="/owner/db" label="DB Tools (Owner)" />
           </nav>
 
           <div className="mt-6 border-t pt-4">
@@ -77,16 +79,13 @@ export default function OwnerLayout({ children }: { children: React.ReactNode })
               <div className="text-sm text-gray-600">
                 Owner Panel <span className="ml-2 text-xs text-gray-400">({pathname})</span>
               </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-                  onClick={() => window.location.reload()}
-                >
-                  Refresh
-                </button>
-              </div>
+              <button
+                type="button"
+                className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
+                onClick={() => window.location.reload()}
+              >
+                Refresh
+              </button>
             </div>
           </header>
 
