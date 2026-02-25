@@ -82,7 +82,7 @@ export class OrderService {
     return items;
   }
 
-  private resolvePrice(menuItem: any): number {
+  private resolveUnitPrice(menuItem: any): number {
     const candidates = [
       menuItem.priceEgp,
       menuItem.priceEGP,
@@ -109,15 +109,23 @@ export class OrderService {
 
   private buildOrderItems(menuItems: any[], items: NormalizedItem[]) {
     const byId = new Map(menuItems.map((mi) => [mi.id, mi]));
-    const orderItems = items.map((i) => {
+    const lines = items.map((i) => {
       const mi = byId.get(i.menuItemId);
       if (!mi) throw new BadRequestException('Invalid item');
-      const unitPrice = this.resolvePrice(mi);
-      return { menuItemId: mi.id, qty: i.qty, unitPrice, lineTotal: unitPrice * i.qty, sku: mi.sku };
+      const unitPrice = this.resolveUnitPrice(mi);
+      return {
+        menuItemId: mi.id,
+        qty: i.qty,
+        unitPrice,
+        lineTotal: unitPrice * i.qty,
+        sku: mi.sku,
+      };
     });
-    const total = orderItems.reduce((s, li) => s + li.lineTotal, 0);
+
+    const total = lines.reduce((s, li) => s + li.lineTotal, 0);
     const hasExtraHour = menuItems.some((mi) => (mi?.sku || '').toUpperCase() === EXTRA_HOUR_SKU);
-    return { orderItems, total, hasExtraHour };
+
+    return { lines, total, hasExtraHour };
   }
 
   private validateCustomerInfoIfNeeded(require: boolean, dto: CreateOrderDtoLike) {
@@ -177,7 +185,7 @@ export class OrderService {
 
   /**
    * Owner/staff create order (supports deskless "counter orders")
-   * Agreement token is required ONLY for non-staff roles AND only when desk/table is involved.
+   * Agreement token required only for non-staff roles AND only when desk/table is involved.
    */
   async createOwnerOrder(tenantId: string, role: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
@@ -186,7 +194,6 @@ export class OrderService {
     const hasDesk = !!dto.deskId;
     const hasTable = !!dto.tableId;
 
-    // desk/table context if provided
     let model: 'table' | 'desk' | null = null;
     let resourceId: string | null = null;
 
@@ -197,7 +204,6 @@ export class OrderService {
       model = loaded.model;
       if (loaded.tenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
 
-      // Only require agreement for non-staff users (customer flows)
       if (!staff) {
         this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
       }
@@ -207,14 +213,12 @@ export class OrderService {
     const menuItemIds = items.map((i) => i.menuItemId);
     const menuItems = await this.loadMenuItems(tenantId, menuItemIds);
 
-    const { orderItems, total, hasExtraHour } = this.buildOrderItems(menuItems, items);
+    const { lines, total, hasExtraHour } = this.buildOrderItems(menuItems, items);
 
-    // Deskless orders must not include EXTRA_HOUR
     if (!resourceId && hasExtraHour) {
       throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
     }
 
-    // Still require customer info for EXTRA_HOUR (even if staff places it)
     this.validateCustomerInfoIfNeeded(hasExtraHour, dto);
 
     try {
@@ -223,15 +227,18 @@ export class OrderService {
           tenantId,
           ...(model === 'table' ? { tableId: resourceId } : {}),
           ...(model === 'desk' ? { deskId: resourceId } : {}),
+
           total,
+
           customerName: hasExtraHour ? dto.customerName!.trim() : null,
           customerPhone: hasExtraHour ? dto.customerPhone!.trim() : null,
+
           orderItems: {
-            create: orderItems.map((li) => ({
+            create: lines.map((li) => ({
               menuItemId: li.menuItemId,
               qty: li.qty,
-              unitPrice: li.unitPrice,
-              lineTotal: li.lineTotal,
+              // REQUIRED by your OrderItem schema:
+              price: li.unitPrice,
             })),
           },
         },
