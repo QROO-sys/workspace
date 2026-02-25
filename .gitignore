@@ -17,3 +17,7 @@ backend/.env*
 
 # logs
 *.log
+
+# build caches
+backend/tsconfig.build.tsbuildinfo
+backend/Dockerfile~
