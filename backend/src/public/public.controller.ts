@@ -1,122 +1,112 @@
-import { Controller, Get, Param, NotFoundException, Query } from '@nestjs/common';
-import { BookingStatus, OrderStatus } from '@prisma/client';
+import { Body, Controller, Get, Post, Query, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 @Controller('public')
 export class PublicController {
   constructor(private prisma: PrismaService) {}
 
-  @Get('desks/:id')
-  async deskWithMenu(@Param('id') id: string) {
-    const desk = await this.prisma.table.findFirst({ where: { id, deleted: false } });
-    if (!desk) throw new NotFoundException('Desk not found');
+  // GET /public?deskId=...
+  @Get()
+  async byDesk(@Query('deskId') deskId?: string) {
+    if (!deskId) throw new BadRequestException('deskId is required');
 
+    const desk = await this.prisma.table.findFirst({
+      where: { id: deskId } as any,
+    } as any);
+
+    if (!desk) throw new BadRequestException('Desk not found');
+
+    // Menu items for the same tenant as the desk
+    const tenantId = (desk as any).tenantId;
     const menuItems = await this.prisma.menuItem.findMany({
-      where: { tenantId: desk.tenantId, deleted: false },
-      orderBy: { name: 'asc' },
+      where: {
+        deleted: false as any,
+        tenant: { id: tenantId },
+      } as any,
+      orderBy: { name: 'asc' } as any,
+    } as any).catch(async () => {
+      // fallback if schema uses tenantId scalar
+      return this.prisma.menuItem.findMany({
+        where: { deleted: false as any, tenantId } as any,
+        orderBy: { name: 'asc' } as any,
+      } as any);
     });
 
-    return { desk, menuItems };
+    return { ok: true, desk, menuItems };
   }
 
-  // Availability for time-slot picking.
-  // Accepts either:
-  //  - ?date=YYYY-MM-DD (local) OR
-  //  - ?from=ISO&to=ISO
-  @Get('desks/:id/availability')
-  async availabilityForDesk(
-    @Param('id') id: string,
-    @Query('date') date?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
-    const desk = await this.prisma.table.findFirst({ where: { id, deleted: false } });
-    if (!desk) throw new NotFoundException('Desk not found');
+  // POST /public/orders  (guest desk-user orders, no token)
+  @Post('orders')
+  async createOrder(@Body() dto: any) {
+    const tableId = String(dto?.tableId || '');
+    if (!tableId) throw new BadRequestException('tableId is required');
 
-    let rangeFrom: Date;
-    let rangeTo: Date;
+    const items = Array.isArray(dto?.items) ? dto.items : [];
+    if (!items.length) throw new BadRequestException('items are required');
 
-    if (from && to) {
-      rangeFrom = new Date(from);
-      rangeTo = new Date(to);
-    } else {
-      // Default to “today” if no date.
-      const d = date ? new Date(`${date}T00:00:00`) : new Date();
-      rangeFrom = new Date(d);
-      rangeFrom.setHours(0, 0, 0, 0);
-      rangeTo = new Date(rangeFrom);
-      rangeTo.setDate(rangeTo.getDate() + 1);
+    const desk = await this.prisma.table.findFirst({ where: { id: tableId } as any } as any);
+    if (!desk) throw new BadRequestException('Desk not found');
+
+    const tenantId = (desk as any).tenantId;
+
+    // Load menu items to compute pricing and enforce "Extend time requires customer info"
+    const ids = items.map((x: any) => String(x?.menuItemId || '')).filter(Boolean);
+    const menu = await this.prisma.menuItem.findMany({
+      where: { tenant: { id: tenantId }, id: { in: ids }, deleted: false as any } as any,
+    } as any).catch(async () => {
+      return this.prisma.menuItem.findMany({
+        where: { tenantId, id: { in: ids }, deleted: false as any } as any,
+      } as any);
+    });
+
+    const byId = new Map(menu.map((m: any) => [String(m.id), m]));
+    for (const it of items) {
+      if (!byId.get(String(it.menuItemId))) {
+        throw new BadRequestException('Invalid menuItemId in items');
+      }
     }
 
-    const occupiedOrders = await this.prisma.order.findMany({
-      where: {
-        tenantId: desk.tenantId,
-        tableId: desk.id,
-        deleted: false,
-        status: { notIn: [OrderStatus.CANCELLED] },
-        // overlap: start < rangeTo AND (end ?? start) > rangeFrom
-        startAt: { lt: rangeTo },
-        OR: [{ endAt: null }, { endAt: { gt: rangeFrom } }],
-      },
-      select: { id: true, status: true, startAt: true, endAt: true },
-      orderBy: { startAt: 'asc' },
-    });
+    const hasExtraHour = menu.some((m: any) => String(m.sku || '').toUpperCase() === 'EXTRA_HOUR');
 
-    const occupiedBookings = await this.prisma.booking.findMany({
-      where: {
-        tenantId: desk.tenantId,
-        tableId: desk.id,
-        deleted: false,
-        status: { notIn: [BookingStatus.CANCELLED] },
-        startAt: { lt: rangeTo },
-        endAt: { gt: rangeFrom },
-      },
-      select: { id: true, status: true, startAt: true, endAt: true },
-      orderBy: { startAt: 'asc' },
-    });
+    // Only required for Extend time
+    const customerName = dto?.customerName == null ? undefined : String(dto.customerName);
+    const customerPhone = dto?.customerPhone == null ? undefined : String(dto.customerPhone);
 
-    const occupied = [
-      ...occupiedOrders.map((o) => ({ id: o.id, kind: 'order' as const, status: o.status, startAt: o.startAt, endAt: o.endAt })),
-      ...occupiedBookings.map((b) => ({ id: b.id, kind: 'booking' as const, status: b.status, startAt: b.startAt, endAt: b.endAt })),
-    ].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    if (hasExtraHour) {
+      if (!customerName?.trim() || !customerPhone?.trim()) {
+        throw new BadRequestException('customerName and customerPhone are required for Extend time');
+      }
+    }
 
-    return { from: rangeFrom.toISOString(), to: rangeTo.toISOString(), occupied };
+    // Compute total
+    let total = 0;
+    const orderItemsData: any[] = [];
+    for (const it of items) {
+      const m = byId.get(String(it.menuItemId));
+      const qty = Math.max(1, Number(it.quantity || 1));
+      const price = Number(m.price || 0);
+      total += price * qty;
+      orderItemsData.push({
+        menuItemId: String(m.id),
+        quantity: qty,
+        price,
+      });
+    }
+
+    const created = await this.prisma.order.create({
+      data: {
+        tableId,
+        tenant: { connect: { id: tenantId } },
+        customerName: hasExtraHour ? customerName?.trim() : null,
+        customerPhone: hasExtraHour ? customerPhone?.trim() : null,
+        notes: dto?.notes ? String(dto.notes) : null,
+        paymentMethod: dto?.paymentMethod ? String(dto.paymentMethod) : 'CASH',
+        paymentStatus: dto?.paymentStatus ? String(dto.paymentStatus) : 'PENDING',
+        total,
+        orderItems: { create: orderItemsData },
+      } as any,
+    } as any);
+
+    return { ok: true, id: created.id, total };
   }
-
-
-  @Get('desks/:id/upcoming')
-  async upcomingForDesk(@Param('id') id: string) {
-    const desk = await this.prisma.table.findFirst({ where: { id, deleted: false } });
-    if (!desk) throw new NotFoundException('Desk not found');
-
-    const now = new Date();
-    const upcoming = await this.prisma.order.findMany({
-      where: {
-        tenantId: desk.tenantId,
-        tableId: desk.id,
-        deleted: false,
-        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.COMPLETED] },
-        startAt: { gt: now },
-      },
-      orderBy: { startAt: 'asc' },
-      take: 10,
-      include: { orderItems: { include: { menuItem: true } } },
-    });
-
-    return { upcoming };
-  }
-
-  @Get('orders/:id')
-  async publicOrder(@Param('id') id: string) {
-    const order = await this.prisma.order.findFirst({
-      where: { id, deleted: false },
-      include: {
-        table: { select: { id: true, name: true, qrUrl: true, hourlyRate: true } },
-        orderItems: { include: { menuItem: true } },
-      },
-    });
-    if (!order) throw new NotFoundException('Order not found');
-    return order;
-  }
-
 }
