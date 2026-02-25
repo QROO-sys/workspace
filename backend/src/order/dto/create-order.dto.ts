@@ -1,36 +1,70 @@
-import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested, IsISO8601 } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
-export class CreateOrderItemInput {
-  @IsUUID()
+class CreateOrderItemDto {
+  @IsString()
+  @IsNotEmpty()
   menuItemId!: string;
 
+  @Type(() => Number)
   @IsInt()
-  @Min(0)
+  @Min(1)
   quantity!: number;
 }
 
-export class CreateGuestOrderDto {
-  @IsUUID()
+function nullToUndefinedString() {
+  return Transform(({ value }) => {
+    if (value === null || value === undefined) return undefined;
+    return String(value);
+  });
+}
+
+export class CreateOrderDto {
+  @IsString()
+  @IsNotEmpty()
   tableId!: string;
 
-  @IsString()
-  customerName!: string;
-
-  @IsString()
-  customerPhone!: string;
-
   @IsOptional()
   @IsString()
-  customerNationalIdPath?: string;
+  sessionId?: string;
 
-  // Optional booking start time (ISO 8601). If omitted, starts now.
+  // ✅ Optional + null-safe
   @IsOptional()
-  @IsISO8601()
-  startAt?: string;
+  @nullToUndefinedString()
+  @IsString()
+  customerName?: string;
+
+  // ✅ Optional + null-safe
+  @IsOptional()
+  @nullToUndefinedString()
+  @IsString()
+  customerPhone?: string;
+
+  @IsOptional()
+  @nullToUndefinedString()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @nullToUndefinedString()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
+  @nullToUndefinedString()
+  @IsString()
+  paymentStatus?: string;
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => CreateOrderItemInput)
-  items!: CreateOrderItemInput[];
+  @Type(() => CreateOrderItemDto)
+  items!: CreateOrderItemDto[];
 }
