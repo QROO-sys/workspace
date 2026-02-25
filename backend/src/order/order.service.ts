@@ -6,10 +6,8 @@ const EXTRA_HOUR_SKU = 'EXTRA_HOUR';
 const POLICY_VERSION = 'v0.1';
 
 type CreateOrderDtoLike = {
-  // desk/tables optional now (supports "counter orders")
   deskId?: string;
   tableId?: string;
-
   agreementToken?: string;
 
   items?: Array<{
@@ -51,8 +49,14 @@ export class OrderService {
 
   async create(req: any, body: any) {
     const tenantId = req?.user?.tenantId;
+    const role = (req?.user?.role || '').toString().toUpperCase();
     if (!tenantId) throw new BadRequestException('tenantId missing');
-    return this.createOwnerOrder(tenantId, body);
+
+    return this.createOwnerOrder(tenantId, role, body);
+  }
+
+  private isStaffRole(role: string) {
+    return role === 'OWNER' || role === 'ADMIN' || role === 'EMPLOYEE';
   }
 
   private getResourceModelName(): 'table' | 'desk' | null {
@@ -171,26 +175,32 @@ export class OrderService {
     });
   }
 
-  // Create (owner/staff) — now supports deskless orders
-  async createOwnerOrder(tenantId: string, dto: CreateOrderDtoLike) {
+  /**
+   * Owner/staff create order (supports deskless "counter orders")
+   * Agreement token is required ONLY for non-staff roles AND only when desk/table is involved.
+   */
+  async createOwnerOrder(tenantId: string, role: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
+    const staff = this.isStaffRole(role);
 
     const hasDesk = !!dto.deskId;
     const hasTable = !!dto.tableId;
 
-    // If desk/table provided, enforce agreement + tenant match
+    // desk/table context if provided
     let model: 'table' | 'desk' | null = null;
     let resourceId: string | null = null;
 
     if (hasDesk || hasTable) {
       resourceId = (dto.deskId || dto.tableId)!;
       const loaded = await this.loadResourceAndTenant(resourceId);
-      model = loaded.model;
 
+      model = loaded.model;
       if (loaded.tenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
 
-      // HARD GATE only when desk/table exists
-      this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
+      // Only require agreement for non-staff users (customer flows)
+      if (!staff) {
+        this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
+      }
     }
 
     const items = this.normalizeItems(dto);
@@ -199,28 +209,23 @@ export class OrderService {
 
     const { orderItems, total, hasExtraHour } = this.buildOrderItems(menuItems, items);
 
-    // If deskless order, EXTRA_HOUR is not allowed
+    // Deskless orders must not include EXTRA_HOUR
     if (!resourceId && hasExtraHour) {
       throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
     }
 
-    // Name/phone only required if EXTRA_HOUR is in cart (desk/session order)
+    // Still require customer info for EXTRA_HOUR (even if staff places it)
     this.validateCustomerInfoIfNeeded(hasExtraHour, dto);
 
     try {
       const order = await p.order.create({
         data: {
           tenantId,
-
-          // Only include desk/table FK if present
           ...(model === 'table' ? { tableId: resourceId } : {}),
           ...(model === 'desk' ? { deskId: resourceId } : {}),
-
           total,
-
           customerName: hasExtraHour ? dto.customerName!.trim() : null,
           customerPhone: hasExtraHour ? dto.customerPhone!.trim() : null,
-
           orderItems: {
             create: orderItems.map((li) => ({
               menuItemId: li.menuItemId,
