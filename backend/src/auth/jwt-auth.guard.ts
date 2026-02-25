@@ -1,25 +1,32 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private authService: AuthService) {}
+  constructor(private readonly jwt: JwtService) {}
+
+  private extractBearer(req: any): string | null {
+    const h = req?.headers?.authorization || req?.headers?.Authorization;
+    if (!h || typeof h !== 'string') return null;
+    const [type, token] = h.split(' ');
+    if (String(type).toLowerCase() !== 'bearer') return null;
+    return token || null;
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
+    const token = this.extractBearer(req);
 
-    // Prefer Bearer token, fallback to httpOnly cookie
-    const header = req.headers['authorization'] as string | undefined;
-    let token: string | undefined;
-    if (header && header.startsWith('Bearer ')) token = header.slice(7);
+    if (!token) {
+      throw new UnauthorizedException('Missing token');
+    }
 
-    if (!token) token = req.cookies?.access_token;
-
-    if (!token) throw new UnauthorizedException('Missing token');
-
-    const payload = await this.authService.verifyToken(token);
-    req.user = { id: payload.sub, email: payload.email, tenantId: payload.tenantId, role: payload.role };
-    req.tenantId = payload.tenantId;
-    return true;
+    try {
+      const payload = await this.jwt.verifyAsync(token);
+      req.user = payload;
+      return true;
+    } catch {
+      throw new UnauthorizedException('Invalid token');
+    }
   }
 }

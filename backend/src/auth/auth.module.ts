@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
+@Global()
 @Module({
   imports: [
     JwtModule.register({
-      // IMPORTANT: set JWT_SECRET in Render Environment Variables
       secret: process.env.JWT_SECRET || 'dev-unsafe-secret-change-me',
       signOptions: {
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
@@ -15,7 +16,7 @@ import { AuthService } from './auth.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, PrismaService],
-  exports: [AuthService, JwtModule],
+  providers: [AuthService, PrismaService, JwtAuthGuard],
+  exports: [AuthService, JwtModule, JwtAuthGuard],
 })
 export class AuthModule {}
