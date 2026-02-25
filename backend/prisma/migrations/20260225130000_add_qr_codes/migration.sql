@@ -1,5 +1,5 @@
--- CreateTable
-CREATE TABLE "QrCode" (
+-- CreateTable (idempotent)
+CREATE TABLE IF NOT EXISTS "QrCode" (
   "id" TEXT NOT NULL,
   "tenantId" TEXT NOT NULL,
   "type" TEXT NOT NULL,
@@ -7,13 +7,11 @@ CREATE TABLE "QrCode" (
   "target" TEXT NOT NULL,
   "label" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
   CONSTRAINT "QrCode_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE INDEX "QrCode_tenantId_type_idx" ON "QrCode"("tenantId", "type");
+-- Indexes (idempotent)
+CREATE INDEX IF NOT EXISTS "QrCode_tenantId_type_idx" ON "QrCode"("tenantId", "type");
 
--- CreateIndex
-CREATE UNIQUE INDEX "QrCode_tenantId_type_entityId_key"
+CREATE UNIQUE INDEX IF NOT EXISTS "QrCode_tenantId_type_entityId_key"
 ON "QrCode"("tenantId", "type", "entityId");
