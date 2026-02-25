@@ -1,35 +1,40 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Controller, Get, Query, Req, UseGuards, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { AnalyticsService } from './analytics.service';
 
+function reqRole(req: any): string {
+  return String(req?.user?.role || '').toUpperCase();
+}
+function assertOwner(req: any) {
+  if (reqRole(req) !== 'OWNER') throw new ForbiddenException('Owner only');
+}
+
 @Controller('analytics')
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class AnalyticsController {
-  constructor(private analytics: AnalyticsService) {}
+  constructor(private readonly analytics: AnalyticsService) {}
 
+  // Daily revenue: Admin/Employee allowed; Owner allowed
+  @UseGuards(JwtAuthGuard)
   @Get('revenue/daily')
-  // Staff can see DAILY revenue only (no totals). Owner/Manager can see totals + daily.
-  @Roles(Role.OWNER, Role.MANAGER, Role.STAFF)
-  async daily(@Req() req: any, @Query('days') days?: string) {
-    let nDays = Number(days) || 30;
-    if (req.user?.role === Role.STAFF) {
-      // Staff: keep it strictly “daily” and prevent reconstructing all-time totals by asking for huge ranges.
-      nDays = Math.min(Math.max(nDays, 1), 7);
-    }
-    const data = await this.analytics.dailyRevenue(req.tenantId, nDays);
+  async daily(@Req() req: any) {
+    return this.analytics.revenueDaily(req);
+  }
 
-    // Do NOT expose totals to STAFF.
-    if (req.user?.role === Role.STAFF) {
-      return { days: nDays, data };
-    }
+  // Yearly revenue: Owner only
+  @UseGuards(JwtAuthGuard)
+  @Get('revenue/yearly')
+  async yearly(@Req() req: any, @Query('year') yearStr?: string) {
+    assertOwner(req);
+    const year = Number(yearStr || new Date().getFullYear());
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new BadRequestException('Invalid year');
+    return this.analytics.revenueYearly(req, year);
+  }
 
-    const totals = data.reduce(
-      (acc, d) => ({ gross: acc.gross + d.gross, completed: acc.completed + d.completed }),
-      { gross: 0, completed: 0 },
-    );
-    return { days: nDays, totals, data };
+  // All-time revenue: Owner only
+  @UseGuards(JwtAuthGuard)
+  @Get('revenue/alltime')
+  async alltime(@Req() req: any) {
+    assertOwner(req);
+    return this.analytics.revenueAllTime(req);
   }
 }
