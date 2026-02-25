@@ -9,14 +9,7 @@ type CreateOrderDtoLike = {
   deskId?: string;
   tableId?: string;
   agreementToken?: string;
-
-  items?: Array<{
-    itemId?: string;
-    menuItemId?: string;
-    qty?: number;
-    quantity?: number;
-  }>;
-
+  items?: Array<{ itemId?: string; menuItemId?: string; qty?: number; quantity?: number }>;
   customerName?: string;
   customerPhone?: string;
 };
@@ -37,11 +30,9 @@ export class OrderService {
     return secret;
   }
 
-  // Controller compatibility
   async list(req: any) {
     const tenantId = req?.user?.tenantId;
     if (!tenantId) throw new BadRequestException('tenantId missing');
-
     const since = req?.query?.since;
     if (since) return this.listForTenantSince(tenantId, since);
     return this.listForTenant(tenantId);
@@ -51,7 +42,6 @@ export class OrderService {
     const tenantId = req?.user?.tenantId;
     const role = (req?.user?.role || '').toString().toUpperCase();
     if (!tenantId) throw new BadRequestException('tenantId missing');
-
     return this.createOwnerOrder(tenantId, role, body);
   }
 
@@ -107,24 +97,16 @@ export class OrderService {
     return menuItems as any[];
   }
 
-  private buildOrderItems(menuItems: any[], items: NormalizedItem[]) {
+  private buildLines(menuItems: any[], items: NormalizedItem[]) {
     const byId = new Map(menuItems.map((mi) => [mi.id, mi]));
     const lines = items.map((i) => {
       const mi = byId.get(i.menuItemId);
       if (!mi) throw new BadRequestException('Invalid item');
       const unitPrice = this.resolveUnitPrice(mi);
-      return {
-        menuItemId: mi.id,
-        qty: i.qty,
-        unitPrice,
-        lineTotal: unitPrice * i.qty,
-        sku: mi.sku,
-      };
+      return { menuItemId: mi.id, qty: i.qty, unitPrice, lineTotal: unitPrice * i.qty, sku: mi.sku };
     });
-
     const total = lines.reduce((s, li) => s + li.lineTotal, 0);
     const hasExtraHour = menuItems.some((mi) => (mi?.sku || '').toUpperCase() === EXTRA_HOUR_SKU);
-
     return { lines, total, hasExtraHour };
   }
 
@@ -152,73 +134,50 @@ export class OrderService {
   private enforceAgreement(dto: CreateOrderDtoLike, expectedTenantId: string, expectedModel: 'table' | 'desk', expectedId: string) {
     const token = dto.agreementToken;
     if (!token) throw new BadRequestException('Laptop agreement signature required before starting a session');
-
     const payload = verifyAgreementToken(token, this.getAgreementSecret());
-
     if (payload.v !== POLICY_VERSION) throw new BadRequestException('Agreement policy version mismatch');
     if (payload.tenantId !== expectedTenantId) throw new BadRequestException('Agreement tenant mismatch');
     if (payload.resourceType !== expectedModel) throw new BadRequestException('Agreement resource type mismatch');
     if (payload.resourceId !== expectedId) throw new BadRequestException('Agreement desk mismatch');
   }
 
-  // List APIs
   async listForTenant(tenantId: string) {
     const p = this.prismaAny();
-    return p.order.findMany({
-      where: { tenantId },
-      orderBy: { createdAt: 'desc' },
-      include: { orderItems: true },
-      take: 200,
-    });
+    return p.order.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, include: { orderItems: true }, take: 200 });
   }
 
   async listForTenantSince(tenantId: string, since: any) {
     const p = this.prismaAny();
     const d = since instanceof Date ? since : new Date(since);
     if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid since date');
-    return p.order.findMany({
-      where: { tenantId, createdAt: { gte: d } },
-      orderBy: { createdAt: 'desc' },
-      include: { orderItems: true },
-    });
+    return p.order.findMany({ where: { tenantId, createdAt: { gte: d } }, orderBy: { createdAt: 'desc' }, include: { orderItems: true } });
   }
 
-  /**
-   * Owner/staff create order (supports deskless "counter orders")
-   * Agreement token required only for non-staff roles AND only when desk/table is involved.
-   */
   async createOwnerOrder(tenantId: string, role: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
     const staff = this.isStaffRole(role);
 
-    const hasDesk = !!dto.deskId;
-    const hasTable = !!dto.tableId;
+    const hasDeskOrTable = !!dto.deskId || !!dto.tableId;
 
     let model: 'table' | 'desk' | null = null;
     let resourceId: string | null = null;
 
-    if (hasDesk || hasTable) {
+    if (hasDeskOrTable) {
       resourceId = (dto.deskId || dto.tableId)!;
       const loaded = await this.loadResourceAndTenant(resourceId);
-
       model = loaded.model;
       if (loaded.tenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
-
-      if (!staff) {
-        this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
-      }
+      if (!staff) this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
+      resourceId = loaded.resource.id;
     }
 
     const items = this.normalizeItems(dto);
     const menuItemIds = items.map((i) => i.menuItemId);
     const menuItems = await this.loadMenuItems(tenantId, menuItemIds);
 
-    const { lines, total, hasExtraHour } = this.buildOrderItems(menuItems, items);
+    const { lines, total, hasExtraHour } = this.buildLines(menuItems, items);
 
-    if (!resourceId && hasExtraHour) {
-      throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
-    }
-
+    if (!resourceId && hasExtraHour) throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
     this.validateCustomerInfoIfNeeded(hasExtraHour, dto);
 
     try {
@@ -227,18 +186,14 @@ export class OrderService {
           tenantId,
           ...(model === 'table' ? { tableId: resourceId } : {}),
           ...(model === 'desk' ? { deskId: resourceId } : {}),
-
           total,
-
           customerName: hasExtraHour ? dto.customerName!.trim() : null,
           customerPhone: hasExtraHour ? dto.customerPhone!.trim() : null,
-
           orderItems: {
             create: lines.map((li) => ({
               menuItemId: li.menuItemId,
               qty: li.qty,
-              // REQUIRED by your OrderItem schema:
-              price: li.unitPrice,
+              price: li.unitPrice, // REQUIRED by your schema
             })),
           },
         },
