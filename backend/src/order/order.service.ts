@@ -1,216 +1,238 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma.service';
-
-function role(req: any) {
-  return String(req?.user?.role || '').toUpperCase();
-}
-function tenantId(req: any): string | null {
-  const t = req?.user?.tenantId;
-  return t ? String(t) : null;
-}
-function s(v: any): string | null {
-  if (v === null || v === undefined) return null;
-  const out = String(v).trim();
-  return out ? out : null;
-}
-function skuUpper(v: any) {
-  return String(v || '').toUpperCase();
-}
-
-@Injectable()
-export class OrderService {
-  constructor(private prisma: PrismaService) {}
-
-  async list(req: any) {
-    const r = role(req);
-    if (!['OWNER', 'ADMIN', 'EMPLOYEE'].includes(r)) throw new ForbiddenException('Staff only');
-
-    const tId = tenantId(req);
-
-    const orders = await this.prisma.order.findMany({
-      where: tId ? ({ tenantId: tId } as any) : ({} as any),
-      take: 200,
+  async listForTenant(tenantId: string) {
+    return this.prisma.order.findMany({
+      where: { tenantId, deleted: false },
+      orderBy: { createdAt: 'desc' },
       include: {
         table: true,
         orderItems: { include: { menuItem: true } },
-      } as any,
-    } as any);
-
-    return { ok: true, orders };
+      },
+    });
   }
 
-  async create(req: any, body: any) {
-    const r = role(req);
-    if (!['OWNER', 'ADMIN', 'EMPLOYEE'].includes(r)) throw new ForbiddenException('Staff only');
+  async listForTenantSince(tenantId: string, since: Date) {
+    return this.prisma.order.findMany({
+      where: { tenantId, deleted: false, createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        table: true,
+        orderItems: { include: { menuItem: true } },
+      },
+    });
+  }
 
-    const tId = tenantId(req);
+  async getForTenant(id: string, tenantId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deleted: false },
+      include: { table: true, orderItems: { include: { menuItem: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
 
-    const tableId = s(body?.tableId);
-    if (!tableId) throw new BadRequestException('tableId is required');
 
-    const items = Array.isArray(body?.items) ? body.items : [];
-    if (!items.length) throw new BadRequestException('items are required');
+  async createGuestOrder(dto: CreateGuestOrderDto) {
+    const table = await this.prisma.table.findFirst({
+      where: { id: dto.tableId, deleted: false },
+    });
+    if (!table) throw new NotFoundException('Desk not found');
 
-    // Desk must exist (and belong to tenant if tenantId exists in token)
-    const desk = await this.prisma.table.findFirst({
-      where: tId ? ({ id: tableId, tenantId: tId } as any) : ({ id: tableId } as any),
-    } as any);
+    const tenantId = table.tenantId;
+    return this.createOrderInternal(table.id, tenantId, dto, 'GUEST');
+  }
 
-    if (!desk) throw new BadRequestException('Desk not found');
+  // Owner creates a future booking or a walk-in session (auth required)
+  async createOwnerOrder(tenantId: string, dto: CreateGuestOrderDto) {
+    const table = await this.prisma.table.findFirst({
+      where: { id: dto.tableId, tenantId, deleted: false },
+    });
+    if (!table) throw new NotFoundException('Desk not found');
+    return this.createOrderInternal(table.id, tenantId, dto, 'STAFF');
+  }
 
-    const deskTenantId = String((desk as any).tenantId || tId || '');
+  async upcomingForTenant(tenantId: string) {
+    const now = new Date();
+    return this.prisma.order.findMany({
+      where: {
+        tenantId,
+        deleted: false,
+        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.COMPLETED] },
+        startAt: { gt: now },
+      },
+      orderBy: { startAt: 'asc' },
+      include: { table: true, orderItems: { include: { menuItem: true } } },
+    });
+  }
 
-    // Load menu items to validate IDs + compute total
-    const ids = items.map((x: any) => String(x?.menuItemId || '')).filter(Boolean);
-    if (!ids.length) throw new BadRequestException('items must include menuItemId');
+  private async createOrderInternal(
+    tableId: string,
+    tenantId: string,
+    dto: CreateGuestOrderDto,
+    source: 'GUEST' | 'STAFF',
+  ) {
+    const items = (dto.items || []).filter(i => i.quantity > 0);
+    if (items.length === 0) throw new BadRequestException('No items');
 
-    const menu = await this.prisma.menuItem.findMany({
-      where: { id: { in: ids } } as any,
-      take: 1000,
-    } as any);
+    const ids = items.map(i => i.menuItemId);
+    const menuItems = await this.prisma.menuItem.findMany({
+      where: { id: { in: ids }, tenantId, deleted: false },
+    });
 
-    const byId = new Map(menu.map((m: any) => [String(m.id), m]));
+    const byId = new Map(menuItems.map(mi => [mi.id, mi]));
+
+    // Identify "Extra hour" and "Coffee" by SKU (stable even if names change)
+    let hoursQty = 0;
+    let coffeeQty = 0;
+
     for (const it of items) {
-      if (!byId.get(String(it.menuItemId))) {
-        throw new BadRequestException('Invalid menuItemId in items');
+      const mi = byId.get(it.menuItemId);
+      if (!mi) throw new BadRequestException('Invalid item');
+
+      const isExtraHour = mi.sku === SKU_EXTRA_HOUR || norm(mi.name) === 'extra hour';
+      const isCoffee = mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee';
+
+      if (isExtraHour) hoursQty += it.quantity;
+      if (isCoffee) coffeeQty += it.quantity;
+    }
+
+    if (hoursQty <= 0) {
+      throw new BadRequestException('You must add at least 1 hour (Extra hour)');
+    }
+
+    const table = await this.prisma.table.findFirst({
+      where: { id: tableId, tenantId, deleted: false },
+      select: { id: true, name: true, hourlyRate: true },
+    });
+    if (!table) throw new NotFoundException('Desk not found');
+
+    // Start/end time for the session or future booking
+    const now = new Date();
+    let startAt = now;
+    if (dto.startAt) {
+      const parsed = new Date(dto.startAt);
+      if (isNaN(parsed.getTime())) throw new BadRequestException('Invalid start time');
+      // Reject clearly-in-the-past bookings
+      if (parsed.getTime() < now.getTime() - 5 * 60 * 1000) {
+        throw new BadRequestException('Start time is in the past');
+      }
+      // If it's "about now" (within 5 minutes), treat it as now
+      startAt = parsed.getTime() < now.getTime() + 5 * 60 * 1000 ? now : parsed;
+    }
+
+    const endAt = new Date(startAt.getTime() + hoursQty * 60 * 60 * 1000);
+
+    // Prevent double-booking the same desk
+    const overlap = await this.prisma.order.findFirst({
+      where: {
+        tenantId,
+        tableId,
+        deleted: false,
+        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.COMPLETED] },
+        startAt: { lt: endAt },
+        endAt: { gt: startAt },
+      },
+      select: { id: true, startAt: true, endAt: true },
+    });
+
+    if (overlap) {
+      throw new BadRequestException('Desk is already booked for that time slot');
+    }
+
+    const freeCoffee = hoursQty;
+    const freeCoffeeUsed = Math.min(coffeeQty, freeCoffee);
+    const paidCoffeeQty = Math.max(0, coffeeQty - freeCoffee);
+
+    // Build orderItems; we may split coffee into free and paid lines.
+    const orderItemsData: Array<{ menuItemId: string; quantity: number; price: number; }> = [];
+
+    for (const it of items) {
+      const mi = byId.get(it.menuItemId)!;
+      const isCoffee = mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee';
+      const isExtraHour = mi.sku === SKU_EXTRA_HOUR || norm(mi.name) === 'extra hour';
+
+      if (isCoffee) {
+        // We'll add coffee lines after the loop
+        continue;
+      }
+
+      orderItemsData.push({
+        menuItemId: mi.id,
+        quantity: it.quantity,
+        price: isExtraHour ? table.hourlyRate : mi.price,
+      });
+    }
+
+    // Add coffee line(s)
+    const coffeeMi = menuItems.find(mi => mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee');
+    if (coffeeMi) {
+      if (freeCoffeeUsed > 0) {
+        orderItemsData.push({
+          menuItemId: coffeeMi.id,
+          quantity: freeCoffeeUsed,
+          price: 0,
+        });
+      }
+      if (paidCoffeeQty > 0) {
+        orderItemsData.push({
+          menuItemId: coffeeMi.id,
+          quantity: paidCoffeeQty,
+          price: coffeeMi.price,
+        });
       }
     }
 
-    const hasExtraHour = menu.some((m: any) => skuUpper(m.sku) === 'EXTRA_HOUR');
+    const total = orderItemsData.reduce((sum, li) => sum + li.price * li.quantity, 0);
 
-    // Only require customer details for EXTRA_HOUR
-    const customerName = hasExtraHour ? s(body?.customerName) : null;
-    const customerPhone = hasExtraHour ? s(body?.customerPhone) : null;
-    if (hasExtraHour && (!customerName || !customerPhone)) {
-      throw new BadRequestException('customerName and customerPhone are required for Extend time');
+    const isFutureBooking = startAt.getTime() > now.getTime() + 5 * 60 * 1000;
+
+    const order = await this.prisma.order.create({
+      data: {
+        tenantId,
+        tableId,
+        total,
+        status: isFutureBooking ? OrderStatus.CONFIRMED : OrderStatus.PENDING,
+        customerName: dto.customerName,
+        customerPhone: dto.customerPhone,
+        customerNationalIdPath: dto.customerNationalIdPath,
+        startAt,
+        endAt,
+        orderItems: {
+          create: orderItemsData,
+        },
+      },
+      include: { table: true, orderItems: { include: { menuItem: true } } },
+    });
+
+    void this.sms
+      .sendToAdmin(
+        `🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`,
+      )
+      .then((r) => {
+        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
+      });
+
+    // Also add to the in-app "requests" queue for admin/staff.
+    if (source === 'GUEST') {
+      const summary = order.orderItems
+        .map((oi) => `${oi.quantity}x ${oi.menuItem?.name ?? 'Item'}`)
+        .join(', ');
+      await this.prisma.tableRequest
+        .create({
+          data: {
+            tenantId,
+            tableId,
+            requestType: RequestType.OTHER,
+            message: `New guest order: ${summary || 'Order'} (Total ${order.total} EGP)`,
+            isActive: true,
+          },
+        })
+        .catch(() => void 0);
     }
 
-    // Compute totals and orderItems payload
-    let total = 0;
-    const orderItemsData: any[] = [];
-    for (const it of items) {
-      const m = byId.get(String(it.menuItemId));
-      const qty = Math.max(1, Number(it.quantity || 1));
-      const price = Number(m.price || 0);
-      total += price * qty;
-      orderItemsData.push({ menuItemId: String(m.id), quantity: qty, price });
-    }
+    return order;
+  }
 
-    const notes = s(body?.notes);
-    const paymentMethod = s(body?.paymentMethod) || 'CASH';
-    const paymentStatus = s(body?.paymentStatus) || 'PENDING';
-
-    // Try create with progressively simpler payloads to avoid Prisma schema mismatch
-    const attempts: any[] = [];
-
-    // Attempt 1: tenant relation + payment fields + orderItems
-    attempts.push({
-      tenant: deskTenantId ? { connect: { id: deskTenantId } } : undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      paymentMethod,
-      paymentStatus,
-      total,
-      orderItems: { create: orderItemsData },
-    });
-
-    // Attempt 2: tenantId scalar + payment fields + orderItems
-    attempts.push({
-      tenantId: deskTenantId || undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      paymentMethod,
-      paymentStatus,
-      total,
-      orderItems: { create: orderItemsData },
-    });
-
-    // Attempt 3: no payment fields (if model doesn’t have them)
-    attempts.push({
-      tenant: deskTenantId ? { connect: { id: deskTenantId } } : undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      total,
-      orderItems: { create: orderItemsData },
-    });
-    attempts.push({
-      tenantId: deskTenantId || undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      total,
-      orderItems: { create: orderItemsData },
-    });
-
-    // Attempt 4: if relation name differs (items instead of orderItems)
-    attempts.push({
-      tenant: deskTenantId ? { connect: { id: deskTenantId } } : undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      total,
-      items: { create: orderItemsData },
-    });
-    attempts.push({
-      tenantId: deskTenantId || undefined,
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      total,
-      items: { create: orderItemsData },
-    });
-
-    // Attempt 5: minimal order (no tenant, no nested create) — should never be needed, but prevents hard fail
-    attempts.push({
-      tableId,
-      customerName,
-      customerPhone,
-      notes,
-      total,
-    });
-
-    let lastErr: any = null;
-
-    for (const data of attempts) {
-      try {
-        // Clean undefined keys (Prisma hates some undefined nesting)
-        const cleaned: any = {};
-        for (const [k, v] of Object.entries(data)) {
-          if (v !== undefined) cleaned[k] = v;
-        }
-
-        const created = await this.prisma.order.create({ data: cleaned } as any);
-
-        // If we had to create minimal order, still try to attach items afterwards if relation exists
-        if (!cleaned.orderItems && !cleaned.items) {
-          try {
-            await this.prisma.orderItem.createMany({
-              data: orderItemsData.map((oi) => ({ ...oi, orderId: created.id })),
-            } as any);
-          } catch {
-            // ignore — schema may not have orderItem model exposed
-          }
-        }
-
-        return { ok: true, id: created.id, total };
-      } catch (e: any) {
-        lastErr = e;
-      }
-    }
-
-    // If all attempts failed, surface a useful message for you in logs
-    // but a generic message for the client.
-    // eslint-disable-next-line no-console
-    console.error('[OrderService.create] Failed all create attempts:', lastErr?.message || lastErr);
-    throw new BadRequestException('Order could not be created (server config mismatch). Check server logs.');
+  async updateStatus(id: string, tenantId: string, status: OrderStatus) {
+    await this.getForTenant(id, tenantId);
+    return this.prisma.order.update({ where: { id }, data: { status } });
   }
 }
