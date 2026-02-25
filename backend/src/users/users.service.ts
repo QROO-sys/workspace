@@ -1,53 +1,71 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import * as bcrypt from 'bcryptjs';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+
+function reqRole(req: any): string {
+  return String(req?.user?.role || '').toUpperCase();
+}
+function reqTenantId(req: any): string | null {
+  const t = req?.user?.tenantId;
+  return t ? String(t) : null;
+}
+function reqUserId(req: any): string | null {
+  const sub = req?.user?.sub ?? req?.user?.userId ?? req?.user?.id;
+  return sub ? String(sub) : null;
+}
 
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async list(tenantId: string) {
-    return this.prisma.user.findMany({
-      where: { tenantId, deleted: false },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+  async listUsers(req: any) {
+    const r = reqRole(req);
+    if (r !== 'OWNER' && r !== 'ADMIN') throw new ForbiddenException('Owner/Admin only');
+
+    const tenantId = reqTenantId(req);
+
+    // If tenantId exists on token, scope to tenant. Otherwise return latest 100.
+    const where = tenantId ? ({ tenantId } as any) : ({} as any);
+
+    const users = await this.prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' } as any,
+      take: 200,
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        tenantId: true,
+        createdAt: true,
+      } as any,
     });
+
+    return { ok: true, users };
   }
 
-  async create(tenantId: string, dto: CreateUserDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (exists) throw new ConflictException('Email already exists');
+  async updateUserRole(req: any, id: string, role: string) {
+    if (reqRole(req) !== 'OWNER') throw new ForbiddenException('Owner only');
 
-    const hashed = await bcrypt.hash(dto.password, 10);
-    const user = await this.prisma.user.create({
-      data: {
-        tenantId,
-        email: dto.email,
-        password: hashed,
-        name: dto.name,
-        role: dto.role,
-      },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+    const tenantId = reqTenantId(req);
+
+    const existing = await this.prisma.user.findFirst({
+      where: tenantId ? ({ id, tenantId } as any) : ({ id } as any),
+      select: { id: true, email: true, role: true, tenantId: true } as any,
     });
-    return user;
-  }
 
-  async updateRole(tenantId: string, userId: string, dto: UpdateUserRoleDto) {
-    const existing = await this.prisma.user.findFirst({ where: { id: userId, tenantId, deleted: false } });
     if (!existing) throw new NotFoundException('User not found');
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { role: dto.role },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
-    });
-  }
 
-  async disable(tenantId: string, userId: string) {
-    const existing = await this.prisma.user.findFirst({ where: { id: userId, tenantId, deleted: false } });
-    if (!existing) throw new NotFoundException('User not found');
-    await this.prisma.user.update({ where: { id: userId }, data: { deleted: true } });
-    return { ok: true };
+    // Safety: prevent removing OWNER from yourself accidentally unless you really mean it.
+    const me = reqUserId(req);
+    if (me && me === id && role !== 'OWNER') {
+      throw new ForbiddenException('You cannot change your own role away from OWNER');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id } as any,
+      data: { role } as any,
+      select: { id: true, email: true, role: true, tenantId: true } as any,
+    });
+
+    return { ok: true, user: updated };
   }
 }
