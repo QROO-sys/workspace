@@ -5,11 +5,21 @@ import { apiFetch } from "@/lib/api";
 
 type AnyObj = Record<string, any>;
 
-function pad(n: number) {
+type DeskRow = {
+  id: string;
+  name: string;
+  laptopSerial: string;
+  isPlaceholder?: boolean;
+};
+
+function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+function pad3(n: number) {
+  return String(n).padStart(3, "0");
+}
 function toISODate(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 function isFiniteDate(x: any) {
   const t = new Date(x).getTime();
@@ -22,21 +32,27 @@ function toTime(x: any) {
 
 export default function OwnerBookingsPage() {
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [pageErr, setPageErr] = useState<string | null>(null);
 
-  const [desks, setDesks] = useState<AnyObj[]>([]);
+  const [desks, setDesks] = useState<DeskRow[]>([]);
   const [bookings, setBookings] = useState<AnyObj[]>([]);
   const [sessions, setSessions] = useState<AnyObj[]>([]);
 
-  // Booking panel state
-  const [bookingDeskId, setBookingDeskId] = useState<string | null>(null);
+  // Booking panel
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelDeskId, setPanelDeskId] = useState<string>("");
+  const [panelDeskName, setPanelDeskName] = useState<string>("");
+
   const [dateISO, setDateISO] = useState(() => toISODate(new Date()));
   const [startHour, setStartHour] = useState<number>(9);
   const [hoursCount, setHoursCount] = useState<number>(1);
-  const [customerName, setCustomerName] = useState<string>("");
-  const [customerPhone, setCustomerPhone] = useState<string>("");
+
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const [createOk, setCreateOk] = useState<string | null>(null);
 
   const hours = useMemo(() => {
     const arr: number[] = [];
@@ -45,47 +61,70 @@ export default function OwnerBookingsPage() {
   }, []);
 
   async function loadAll() {
-    setErr(null);
+    setPageErr(null);
     setLoading(true);
 
     try {
       const [dRes, bRes, sRes] = await Promise.all([
         apiFetch("/desks", { method: "GET" }),
-        apiFetch("/bookings", { method: "GET" }),
+        apiFetch("/bookings", { method: "GET" }).catch(() => []),
         apiFetch("/sessions/active", { method: "GET" }).catch(() => ({ sessions: [] })),
       ]);
 
-      const dArr = Array.isArray(dRes) ? dRes : dRes?.desks;
-      const bArr = Array.isArray(bRes) ? bRes : bRes?.bookings;
+      const dArr = Array.isArray(dRes) ? dRes : (dRes as any)?.desks;
+      const bArr = Array.isArray(bRes) ? bRes : (bRes as any)?.bookings;
+      const sArr = Array.isArray((sRes as any)?.sessions) ? (sRes as any).sessions : [];
 
-      if (!Array.isArray(dArr)) throw new Error("Unexpected /desks response");
-      if (!Array.isArray(bArr)) throw new Error("Unexpected /bookings response");
+      const normRaw: DeskRow[] = Array.isArray(dArr)
+        ? (dArr as any[]).map((d: any, i: number) => ({
+            id: String(d?.id ?? d?._id ?? ""),
+            name: String(d?.name ?? `Desk ${i + 1}`),
+            laptopSerial: String(d?.laptopSerial ?? d?.serial ?? `LAP-${pad3(i + 1)}`),
+          }))
+        : [];
 
-      const normDesks = dArr.map((d: any, i: number) => ({
-        id: String(d?.id ?? d?._id ?? ""),
-        name: String(d?.name ?? `Desk ${i + 1}`),
-        laptopSerial: String(d?.laptopSerial ?? d?.serial ?? ""),
-        qrUrl: String(d?.qrUrl ?? ""),
-      }));
+      // Always 10 rows, pad placeholders if missing
+      const out: DeskRow[] = [];
+      for (let i = 0; i < 10; i++) {
+        const existing = normRaw[i];
+        if (existing && existing.id) {
+          out.push({
+            id: existing.id,
+            name: existing.name || `Desk ${i + 1}`,
+            laptopSerial: existing.laptopSerial || `LAP-${pad3(i + 1)}`,
+          });
+        } else {
+          out.push({
+            id: `placeholder-desk-${i + 1}`,
+            name: `Desk ${i + 1}`,
+            laptopSerial: `LAP-${pad3(i + 1)}`,
+            isPlaceholder: true,
+          });
+        }
+      }
 
-      const normBookings = bArr.map((b: any) => ({
-        id: String(b?.id ?? b?._id ?? ""),
-        tableId: String(b?.tableId ?? b?.deskId ?? b?.table?.id ?? b?.desk?.id ?? ""),
-        deskName: String(b?.table?.name ?? b?.desk?.name ?? ""),
-        startAt: String(b?.startAt ?? b?.startTime ?? b?.start ?? b?.from ?? ""),
-        endAt: String(b?.endAt ?? b?.endTime ?? b?.end ?? b?.to ?? ""),
-        status: String(b?.status ?? ""),
-        customerName: String(b?.customerName ?? b?.customer ?? b?.userEmail ?? ""),
-        customerPhone: String(b?.customerPhone ?? b?.phone ?? ""),
-      }));
+      const normBookings = Array.isArray(bArr)
+        ? (bArr as any[]).map((b: any) => ({
+            id: String(b?.id ?? b?._id ?? ""),
+            tableId: String(b?.tableId ?? b?.deskId ?? b?.table?.id ?? b?.desk?.id ?? ""),
+            startAt: String(b?.startAt ?? b?.startTime ?? b?.start ?? b?.from ?? ""),
+            endAt: String(b?.endAt ?? b?.endTime ?? b?.end ?? b?.to ?? ""),
+            status: String(b?.status ?? ""),
+            customerName: String(b?.customerName ?? b?.customer ?? ""),
+            customerPhone: String(b?.customerPhone ?? b?.phone ?? ""),
+          }))
+        : [];
 
-      const normSessions = Array.isArray(sRes?.sessions) ? sRes.sessions : [];
-
-      setDesks(normDesks);
+      setDesks(out);
       setBookings(normBookings);
-      setSessions(normSessions);
+      setSessions(sArr);
+
+      // Helpful warning if desks are all placeholders
+      if (!normRaw.length) {
+        setPageErr("No desks returned from /desks. Make sure you're logged in and desks are seeded for your tenant.");
+      }
     } catch (e: any) {
-      setErr(e?.message || "Failed to load booking data");
+      setPageErr(e?.message || "Failed to load bookings page data");
     } finally {
       setLoading(false);
     }
@@ -98,7 +137,7 @@ export default function OwnerBookingsPage() {
 
   const activeDeskIds = useMemo(() => {
     const set = new Set<string>();
-    for (const s of sessions) {
+    for (const s of sessions as any[]) {
       const id = String(s?.deskId || s?.tableId || "");
       if (id) set.add(id);
     }
@@ -112,8 +151,6 @@ export default function OwnerBookingsPage() {
     for (const b of bookings) {
       if (!b.tableId) continue;
       if (!isFiniteDate(b.startAt) || !isFiniteDate(b.endAt)) continue;
-
-      // upcoming only
       if (toTime(b.endAt) < now) continue;
 
       const list = map.get(b.tableId) || [];
@@ -129,66 +166,72 @@ export default function OwnerBookingsPage() {
     return map;
   }, [bookings]);
 
-  function deskStatus(deskId: string) {
-    if (activeDeskIds.has(deskId)) return "IN SESSION";
-    const next = upcomingByDesk.get(deskId)?.[0];
-    if (next) return "BOOKED (UPCOMING)";
+  function statusFor(d: DeskRow) {
+    if (d.isPlaceholder) return "UNCONFIGURED";
+    if (activeDeskIds.has(d.id)) return "IN SESSION";
+    const next = upcomingByDesk.get(d.id)?.[0];
+    if (next) return "BOOKED";
     return "OPEN";
   }
 
-  function openBookingPanel(deskId: string) {
+  function openPanel(d: DeskRow) {
+    // This ensures clicking Book ALWAYS does something visible.
     setCreateErr(null);
-    setBookingDeskId(deskId);
+    setCreateOk(null);
+
+    if (d.isPlaceholder) {
+      setCreateErr("This desk is not configured in the database yet (placeholder).");
+      setPanelOpen(true);
+      setPanelDeskId(d.id);
+      setPanelDeskName(d.name);
+      return;
+    }
+
+    setPanelDeskId(d.id);
+    setPanelDeskName(d.name);
     setDateISO(toISODate(new Date()));
     setStartHour(9);
     setHoursCount(1);
     setCustomerName("");
     setCustomerPhone("");
+    setPanelOpen(true);
   }
 
-  function closeBookingPanel() {
+  function closePanel() {
+    setPanelOpen(false);
     setCreateErr(null);
-    setBookingDeskId(null);
+    setCreateOk(null);
   }
 
   async function createBooking() {
     setCreateErr(null);
+    setCreateOk(null);
 
-    if (!bookingDeskId) {
-      setCreateErr("Choose a desk to book.");
-      return;
-    }
+    if (!panelDeskId) return setCreateErr("No desk selected.");
+    const d = desks.find((x) => x.id === panelDeskId);
 
-    if (activeDeskIds.has(bookingDeskId)) {
-      setCreateErr("This desk is currently in session. End the session before booking.");
-      return;
-    }
+    if (d?.isPlaceholder) return setCreateErr("Cannot book a placeholder desk. Seed desks in DB first.");
+    if (activeDeskIds.has(panelDeskId)) return setCreateErr("Desk is currently in session. End session first.");
 
     if (!customerName.trim() || !customerPhone.trim()) {
-      setCreateErr("Customer name and phone are required.");
-      return;
+      return setCreateErr("Customer name and phone are required for bookings.");
     }
 
     if (!Number.isFinite(hoursCount) || hoursCount < 1 || hoursCount > 8) {
-      setCreateErr("Hours must be between 1 and 8.");
-      return;
+      return setCreateErr("Hours must be between 1 and 8.");
     }
-
     if (!Number.isFinite(startHour) || startHour < 9 || startHour > 16) {
-      setCreateErr("Start hour must be between 09:00 and 16:00.");
-      return;
+      return setCreateErr("Start hour must be between 09:00 and 16:00.");
     }
-
     if (startHour + hoursCount > 17) {
-      setCreateErr("Booking must end by 17:00.");
-      return;
+      return setCreateErr("Booking must end by 17:00.");
     }
 
-    const startAt = new Date(`${dateISO}T${pad(startHour)}:00:00`).toISOString();
-    const endAt = new Date(`${dateISO}T${pad(startHour + hoursCount)}:00:00`).toISOString();
+    const startAt = new Date(`${dateISO}T${pad2(startHour)}:00:00`).toISOString();
+    const endAt = new Date(`${dateISO}T${pad2(startHour + hoursCount)}:00:00`).toISOString();
 
-    // Optional: client-side overlap check against known upcoming bookings for that desk
-    const conflicts = (upcomingByDesk.get(bookingDeskId) || []).some((b) => {
+    // Overlap check (client-side)
+    const conflicts = (upcomingByDesk.get(panelDeskId) || []).some((b) => {
       if (!isFiniteDate(b.startAt) || !isFiniteDate(b.endAt)) return false;
       const a1 = toTime(b.startAt);
       const a2 = toTime(b.endAt);
@@ -197,10 +240,7 @@ export default function OwnerBookingsPage() {
       return b1 < a2 && b2 > a1;
     });
 
-    if (conflicts) {
-      setCreateErr("This time overlaps an existing booking for that desk.");
-      return;
-    }
+    if (conflicts) return setCreateErr("This time overlaps an existing booking for that desk.");
 
     setCreating(true);
     try {
@@ -208,7 +248,7 @@ export default function OwnerBookingsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tableId: bookingDeskId,
+          tableId: panelDeskId,
           startAt,
           endAt,
           customerName: customerName.trim(),
@@ -216,8 +256,7 @@ export default function OwnerBookingsPage() {
         }),
       });
 
-      alert("Booking created.");
-      closeBookingPanel();
+      setCreateOk("Booking created.");
       await loadAll();
     } catch (e: any) {
       setCreateErr(e?.message || "Booking failed");
@@ -226,38 +265,24 @@ export default function OwnerBookingsPage() {
     }
   }
 
-  if (loading) {
-    return <div className="text-sm text-gray-600">Loading desk bookings…</div>;
-  }
-
-  if (err) {
-    return (
-      <div className="rounded border bg-white p-4">
-        <div className="font-semibold mb-2">Bookings error</div>
-        <div className="text-sm text-red-700 break-words">{err}</div>
-        <button className="mt-3 rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={loadAll} type="button">
-          Retry
-        </button>
-      </div>
-    );
-  }
+  if (loading) return <div className="text-sm text-gray-600">Loading bookings…</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold">Desk Bookings</div>
-          <div className="text-sm text-gray-600">
-            Book by desk. You can only book desks that are not currently in session.
-          </div>
+          <div className="text-2xl font-bold">Bookings</div>
+          <div className="text-sm text-gray-600">Book by desk. Desks in session can’t be booked.</div>
         </div>
-
         <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={loadAll} type="button">
           Refresh
         </button>
       </div>
 
-      {/* Desk-first table */}
+      {pageErr && (
+        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{pageErr}</div>
+      )}
+
       <div className="overflow-auto rounded border bg-white">
         <table className="min-w-full text-sm">
           <thead>
@@ -265,30 +290,23 @@ export default function OwnerBookingsPage() {
               <th className="py-2 px-3">Desk</th>
               <th className="py-2 px-3">Laptop</th>
               <th className="py-2 px-3">Status</th>
-              <th className="py-2 px-3">Next Booking</th>
-              <th className="py-2 px-3">Actions</th>
+              <th className="py-2 px-3">Next booking</th>
+              <th className="py-2 px-3">Action</th>
             </tr>
           </thead>
           <tbody>
             {desks.map((d) => {
-              const status = deskStatus(d.id);
-              const next = upcomingByDesk.get(d.id)?.[0];
+              const status = statusFor(d);
+              const next = d.isPlaceholder ? null : upcomingByDesk.get(d.id)?.[0];
+
+              const disabled = status === "IN SESSION" || status === "UNCONFIGURED";
 
               return (
-                <tr key={d.id} className="border-b last:border-b-0">
+                <tr key={d.id} className="border-b last:border-b-0 align-top">
                   <td className="py-2 px-3 font-medium">{d.name}</td>
-                  <td className="py-2 px-3">{d.laptopSerial || "-"}</td>
+                  <td className="py-2 px-3">{d.laptopSerial}</td>
                   <td className="py-2 px-3">
-                    <span
-                      className={
-                        "inline-flex rounded px-2 py-1 text-xs border " +
-                        (status === "OPEN"
-                          ? "bg-green-50 text-green-800 border-green-200"
-                          : status === "IN SESSION"
-                          ? "bg-red-50 text-red-800 border-red-200"
-                          : "bg-yellow-50 text-yellow-800 border-yellow-200")
-                      }
-                    >
+                    <span className="inline-flex rounded px-2 py-1 text-xs border bg-gray-50 border-gray-200">
                       {status}
                     </span>
                   </td>
@@ -309,38 +327,42 @@ export default function OwnerBookingsPage() {
                   <td className="py-2 px-3">
                     <button
                       className="rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
-                      disabled={status === "IN SESSION"}
-                      onClick={() => openBookingPanel(d.id)}
+                      disabled={disabled}
+                      onClick={() => openPanel(d)}
                       type="button"
                     >
                       Book
                     </button>
+                    {disabled && status === "UNCONFIGURED" && (
+                      <div className="text-[11px] text-gray-500 mt-1">Seed desks in DB</div>
+                    )}
+                    {disabled && status === "IN SESSION" && (
+                      <div className="text-[11px] text-gray-500 mt-1">End session first</div>
+                    )}
                   </td>
                 </tr>
               );
             })}
-            {!desks.length && (
-              <tr>
-                <td className="py-4 px-3 text-gray-600" colSpan={5}>
-                  No desks found.
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
 
-      {/* Booking panel */}
-      {bookingDeskId && (
+      {/* Booking Panel */}
+      {panelOpen && (
         <div className="rounded border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <div className="font-semibold">
-              Create Booking — {desks.find((d) => d.id === bookingDeskId)?.name || bookingDeskId}
-            </div>
-            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={closeBookingPanel} type="button">
+            <div className="font-semibold">Create booking — {panelDeskName}</div>
+            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={closePanel} type="button">
               Close
             </button>
           </div>
+
+          {createErr && (
+            <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{createErr}</div>
+          )}
+          {createOk && (
+            <div className="rounded border bg-green-50 p-3 text-sm text-green-800 border-green-200">{createOk}</div>
+          )}
 
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block text-sm">
@@ -353,7 +375,7 @@ export default function OwnerBookingsPage() {
               <select className="mt-1 w-full rounded border p-2" value={startHour} onChange={(e) => setStartHour(Number(e.target.value))}>
                 {hours.map((h) => (
                   <option key={h} value={h}>
-                    {pad(h)}:00
+                    {pad2(h)}:00
                   </option>
                 ))}
               </select>
@@ -375,12 +397,6 @@ export default function OwnerBookingsPage() {
               <input className="mt-1 w-full rounded border p-2" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
             </label>
           </div>
-
-          {createErr && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-              {createErr}
-            </div>
-          )}
 
           <button
             className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60"
