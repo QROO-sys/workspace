@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 
 type AnyObj = Record<string, any>;
@@ -14,26 +14,18 @@ function money(n: any) {
 export default function OwnerOrdersQueuePage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-
   const [orders, setOrders] = useState<AnyObj[]>([]);
-  const [sessions, setSessions] = useState<AnyObj[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
     setLoading(true);
     try {
-      const [oRes, sRes] = await Promise.all([
-        apiFetch("/orders", { method: "GET" }),
-        apiFetch("/sessions/active", { method: "GET" }).catch(() => ({ sessions: [] })),
-      ]);
-
-      const oArr = Array.isArray(oRes) ? oRes : oRes?.orders || [];
-      setOrders(oArr.slice(0, 50));
-
-      setSessions(Array.isArray(sRes?.sessions) ? sRes.sessions : []);
+      const res = await apiFetch("/orders", { method: "GET" });
+      const arr = Array.isArray(res) ? res : res?.orders || [];
+      setOrders(arr.slice(0, 50));
     } catch (e: any) {
-      setErr(e?.message || "Failed to load orders queue");
+      setErr(e?.message || "Failed to load orders");
     } finally {
       setLoading(false);
     }
@@ -41,152 +33,114 @@ export default function OwnerOrdersQueuePage() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 8000); // refresh every 8 seconds
+    const t = setInterval(load, 8000);
     return () => clearInterval(t);
   }, []);
 
-  const activeByDesk = useMemo(() => {
-    const m = new Map<string, AnyObj>();
-    for (const s of sessions) {
-      m.set(String(s?.deskId || ""), s);
-    }
-    return m;
-  }, [sessions]);
-
-  async function setStatus(orderId: string, status: string) {
+  async function patchOrder(orderId: string, body: AnyObj) {
     setBusy(orderId);
     try {
-      // If you have an order status endpoint, this will work.
-      // If not, it will error and we’ll just alert.
       await apiFetch(`/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
       await load();
     } catch (e: any) {
-      alert(e?.message || "Status update not supported yet");
+      alert(e?.message || "Update failed (backend may not support PATCH yet)");
     } finally {
       setBusy(null);
     }
   }
 
-  if (loading) return <div className="text-sm text-gray-600">Loading orders queue…</div>;
+  if (loading) return <div className="text-sm text-gray-600">Loading orders…</div>;
   if (err) return <div className="text-sm text-red-700">{err}</div>;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <div className="text-2xl font-bold">Receptionist Queue</div>
+        <div className="text-2xl font-bold">Receptionist Orders</div>
         <div className="text-sm text-gray-600">
-          Incoming orders + current desk occupancies.
+          Cash orders must be marked paid before acceptance.
         </div>
       </div>
 
-      <div className="rounded border bg-white p-4">
-        <div className="font-semibold mb-3">Active Sessions (Occupancy)</div>
-        {sessions.length ? (
-          <div className="overflow-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="py-2 pr-4">Desk</th>
-                  <th className="py-2 pr-4">Customer</th>
-                  <th className="py-2 pr-4">Start</th>
-                  <th className="py-2 pr-4">Free Coffee</th>
+      <div className="overflow-auto rounded border bg-white">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left border-b">
+              <th className="py-2 px-3">Created</th>
+              <th className="py-2 px-3">Desk</th>
+              <th className="py-2 px-3">Items</th>
+              <th className="py-2 px-3">Total</th>
+              <th className="py-2 px-3">Payment</th>
+              <th className="py-2 px-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => {
+              const itemSummary =
+                Array.isArray(o?.orderItems) && o.orderItems.length
+                  ? o.orderItems.map((x: any) => `${x?.quantity || 1}× ${x?.menuItem?.name || "Item"}`).join(", ")
+                  : "";
+
+              const paymentMethod = String(o?.paymentMethod || "UNKNOWN");
+              const paymentStatus = String(o?.paymentStatus || "UNKNOWN");
+
+              return (
+                <tr key={o.id} className="border-b last:border-b-0">
+                  <td className="py-2 px-3">{String(o?.createdAt || "")}</td>
+                  <td className="py-2 px-3">{o?.table?.name || o?.desk?.name || o?.tableId || "-"}</td>
+                  <td className="py-2 px-3">{itemSummary}</td>
+                  <td className="py-2 px-3">{money(o?.total || o?.amount || o?.sum || "")}</td>
+                  <td className="py-2 px-3">
+                    <div className="text-xs">
+                      <div>Method: {paymentMethod}</div>
+                      <div>Status: {paymentStatus}</div>
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 flex gap-2">
+                    {paymentMethod === "CASH" && paymentStatus !== "PAID" ? (
+                      <button
+                        className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
+                        disabled={busy === o.id}
+                        onClick={() => patchOrder(o.id, { paymentStatus: "PAID" })}
+                        type="button"
+                      >
+                        Mark Paid
+                      </button>
+                    ) : null}
+
+                    <button
+                      className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
+                      disabled={busy === o.id}
+                      onClick={() => patchOrder(o.id, { status: "ACCEPTED" })}
+                      type="button"
+                    >
+                      Accept
+                    </button>
+
+                    <button
+                      className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
+                      disabled={busy === o.id}
+                      onClick={() => patchOrder(o.id, { status: "COMPLETED" })}
+                      type="button"
+                    >
+                      Complete
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {sessions.map((s) => (
-                  <tr key={s.bookingId} className="border-b last:border-b-0">
-                    <td className="py-2 pr-4">{s.deskName}</td>
-                    <td className="py-2 pr-4">{s.customerName || "-"} {s.customerPhone ? `(${s.customerPhone})` : ""}</td>
-                    <td className="py-2 pr-4">{String(s.startAt)}</td>
-                    <td className="py-2 pr-4">
-                      available <b>{s.freeCoffeeAvailable}</b>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-sm text-gray-600">No active sessions.</div>
-        )}
-      </div>
-
-      <div className="rounded border bg-white p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="font-semibold">Incoming Orders</div>
-          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={load} type="button">
-            Refresh
-          </button>
-        </div>
-
-        {orders.length ? (
-          <div className="overflow-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="py-2 pr-4">Created</th>
-                  <th className="py-2 pr-4">Desk</th>
-                  <th className="py-2 pr-4">Items</th>
-                  <th className="py-2 pr-4">Total</th>
-                  <th className="py-2 pr-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o) => {
-                  const deskId = String(o?.tableId || o?.deskId || "");
-                  const sess = activeByDesk.get(deskId);
-
-                  const itemSummary =
-                    Array.isArray(o?.orderItems) && o.orderItems.length
-                      ? o.orderItems
-                          .map((x: any) => `${x?.quantity || 1}× ${x?.menuItem?.name || "Item"}`)
-                          .join(", ")
-                      : "";
-
-                  return (
-                    <tr key={o.id} className="border-b last:border-b-0">
-                      <td className="py-2 pr-4">{String(o?.createdAt || "")}</td>
-                      <td className="py-2 pr-4">
-                        {o?.table?.name || o?.desk?.name || deskId || "-"}
-                        {sess?.customerName ? (
-                          <div className="text-xs text-gray-500">
-                            Occupied by {sess.customerName}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="py-2 pr-4">{itemSummary}</td>
-                      <td className="py-2 pr-4">{money(o?.total || o?.amount || o?.sum || "")}</td>
-                      <td className="py-2 pr-4 flex gap-2">
-                        <button
-                          className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
-                          disabled={busy === o.id}
-                          onClick={() => setStatus(o.id, "ACCEPTED")}
-                          type="button"
-                        >
-                          Accept
-                        </button>
-                        <button
-                          className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
-                          disabled={busy === o.id}
-                          onClick={() => setStatus(o.id, "COMPLETED")}
-                          type="button"
-                        >
-                          Complete
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-sm text-gray-600">No orders yet.</div>
-        )}
+              );
+            })}
+            {!orders.length && (
+              <tr>
+                <td className="py-4 px-3 text-gray-600" colSpan={6}>
+                  No orders yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
