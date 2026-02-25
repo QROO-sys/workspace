@@ -9,8 +9,14 @@ function toArr(x: any): any[] {
   if (Array.isArray(x)) return x;
   if (Array.isArray(x?.items)) return x.items;
   if (Array.isArray(x?.data)) return x.data;
-  if (Array.isArray(x?.bookings)) return x.bookings;
+  if (Array.isArray(x?.orders)) return x.orders;
   return [];
+}
+
+function money(n: any) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "";
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 }
 
 function Table({
@@ -52,21 +58,17 @@ function Table({
   );
 }
 
-export default function OwnerBookingsPage() {
+export default function OwnerOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [bookings, setBookings] = useState<AnyObj[]>([]);
+  const [orders, setOrders] = useState<AnyObj[]>([]);
 
-  const upcoming = useMemo(() => {
-    const now = Date.now();
-    return bookings
-      .slice()
-      .sort(
-        (a, b) =>
-          Number(new Date(a.start || 0)) - Number(new Date(b.start || 0))
-      )
-      .filter((b) => Number(new Date(b.start || 0)) >= now);
-  }, [bookings]);
+  const total = useMemo(() => {
+    return orders.reduce((acc, o) => {
+      const v = Number(o?.total ?? o?.amount ?? o?.sum ?? 0);
+      return Number.isFinite(v) ? acc + v : acc;
+    }, 0);
+  }, [orders]);
 
   useEffect(() => {
     let alive = true;
@@ -76,24 +78,23 @@ export default function OwnerBookingsPage() {
         setErr(null);
         setLoading(true);
 
-        // Backend controller: @Controller('bookings')
-        const res = await apiFetch("/bookings", { method: "GET" });
+        // Backend controller: @Controller('orders')
+        const res = await apiFetch("/orders", { method: "GET" });
         const arr = toArr(res);
 
-        const norm = arr.map((b: any) => ({
-          ...b,
-          desk: String(b?.table?.name ?? b?.desk?.name ?? b?.deskId ?? b?.tableId ?? ""),
-          start: String(b?.startAt ?? b?.startTime ?? b?.start ?? b?.from ?? ""),
-          end: String(b?.endAt ?? b?.endTime ?? b?.end ?? b?.to ?? ""),
-          status: String(b?.status ?? ""),
-          customer: String(b?.customerName ?? b?.customer ?? b?.userEmail ?? ""),
+        const norm = arr.map((o: any) => ({
+          ...o,
+          desk: String(o?.table?.name ?? o?.desk?.name ?? o?.tableId ?? o?.deskId ?? ""),
+          total: money(o?.total ?? o?.amount ?? o?.sum ?? ""),
+          created: String(o?.createdAt ?? o?.created ?? ""),
+          items: Array.isArray(o?.orderItems) ? o.orderItems.length : "",
         }));
 
         if (!alive) return;
-        setBookings(norm);
+        setOrders(norm);
       } catch (e: any) {
         if (!alive) return;
-        setErr(e?.message || "Failed to load bookings");
+        setErr(e?.message || "Failed to load orders");
       } finally {
         if (!alive) return;
         setLoading(false);
@@ -108,7 +109,7 @@ export default function OwnerBookingsPage() {
   if (loading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600">
-        Loading bookings…
+        Loading orders…
       </div>
     );
   }
@@ -117,7 +118,7 @@ export default function OwnerBookingsPage() {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-6">
         <div className="max-w-xl w-full rounded border bg-white p-4">
-          <div className="font-semibold mb-2">Bookings error</div>
+          <div className="font-semibold mb-2">Orders error</div>
           <div className="text-sm text-red-700 break-words">{err}</div>
         </div>
       </div>
@@ -127,22 +128,21 @@ export default function OwnerBookingsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-2xl font-bold">Bookings</div>
+        <div className="text-2xl font-bold">Orders</div>
         <div className="text-sm text-gray-600">
-          Total: {bookings.length} • Upcoming: {upcoming.length}
+          Total orders: {orders.length} • Total revenue (orders): {money(total)}
         </div>
       </div>
 
       <Table
-        empty="No bookings."
+        empty="No orders."
         cols={[
           { k: "desk", label: "Desk" },
-          { k: "customer", label: "Customer" },
-          { k: "start", label: "Start" },
-          { k: "end", label: "End" },
-          { k: "status", label: "Status" },
+          { k: "total", label: "Total" },
+          { k: "items", label: "Items" },
+          { k: "created", label: "Created" },
         ]}
-        rows={bookings}
+        rows={orders}
       />
     </div>
   );
