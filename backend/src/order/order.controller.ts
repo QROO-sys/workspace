@@ -1,4 +1,4 @@
-kimport { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrderService } from './order.service';
 
@@ -14,7 +14,6 @@ export class OrderController {
 
   @Post()
   async create(@Req() req: any, @Body() body: any) {
-    // forward agreement token from header (owner/staff flows)
     const headerToken =
       req?.headers?.['x-agreement-token'] ||
       req?.headers?.['x-agreement'] ||
