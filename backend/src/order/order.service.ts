@@ -1,238 +1,308 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
+
+const EXTRA_HOUR_SKU = 'EXTRA_HOUR';
+
+type CreateOrderDtoLike = {
+  deskId?: string;
+  tableId?: string;
+
+  items?: Array<{
+    itemId?: string;
+    menuItemId?: string;
+    qty?: number;
+    quantity?: number;
+  }>;
+
+  customerName?: string;
+  customerPhone?: string;
+  notes?: string;
+
+  // optional query params used by controller list(req)
+  since?: string;
+};
+
+type NormalizedItem = { menuItemId: string; qty: number };
+
+@Injectable()
+export class OrderService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private prismaAny() {
+    return this.prisma as any;
+  }
+
+  // -----------------------------
+  // Controller compatibility layer
+  // -----------------------------
+  // Your controller calls: orders.list(req)
+  async list(req: any) {
+    const tenantId = req?.user?.tenantId;
+    if (!tenantId) throw new BadRequestException('tenantId missing');
+
+    const since = req?.query?.since;
+    if (since) return this.listForTenantSince(tenantId, since);
+    return this.listForTenant(tenantId);
+  }
+
+  // Your controller calls: orders.create(req, body)
+  async create(req: any, body: any) {
+    const tenantId = req?.user?.tenantId;
+    if (!tenantId) throw new BadRequestException('tenantId missing');
+    return this.createOwnerOrder(tenantId, body);
+  }
+
+  // --------- Helpers ---------
+  private getResourceModelName(): 'table' | 'desk' {
+    const p = this.prismaAny();
+    if (p.table) return 'table';
+    if (p.desk) return 'desk';
+    throw new BadRequestException('Neither Prisma model "table" nor "desk" exists. Check schema + prisma generate.');
+  }
+
+  private getResourceId(dto: CreateOrderDtoLike): string {
+    const id = dto.deskId || dto.tableId;
+    if (!id) throw new BadRequestException('deskId (or tableId) is required');
+    return id;
+  }
+
+  private normalizeItems(dto: CreateOrderDtoLike): NormalizedItem[] {
+    const raw = Array.isArray(dto.items) ? dto.items : [];
+
+    const items: NormalizedItem[] = raw
+      .map((i) => {
+        const menuItemId = (i.itemId || i.menuItemId || '').trim();
+        const qtyRaw =
+          Number.isFinite(i.qty as any) ? (i.qty as any) : Number.isFinite(i.quantity as any) ? (i.quantity as any) : 0;
+        const qty = Math.max(0, Math.floor(qtyRaw));
+        return { menuItemId, qty };
+      })
+      .filter((i) => i.menuItemId.length > 0 && i.qty > 0);
+
+    if (items.length === 0) throw new BadRequestException('No items');
+    return items;
+  }
+
+  private resolvePriceEgp(menuItem: any): number {
+    const candidates = [
+      menuItem.priceEgp,
+      menuItem.priceEGP,
+      menuItem.price,
+      menuItem.unitPriceEgp,
+      menuItem.unitPriceEGP,
+      menuItem.unitPrice,
+      menuItem.amountEgp,
+      menuItem.amountEGP,
+    ].filter((v) => typeof v === 'number' && Number.isFinite(v));
+    if (candidates.length === 0) {
+      throw new BadRequestException(`Menu item "${menuItem?.id}" has no numeric price field`);
+    }
+    return candidates[0];
+  }
+
+  private mustRequireCustomerInfo(menuItems: any[]): boolean {
+    return menuItems.some((mi) => (mi?.sku || '').toUpperCase() === EXTRA_HOUR_SKU);
+  }
+
+  private validateCustomerInfoIfNeeded(require: boolean, dto: CreateOrderDtoLike) {
+    if (!require) return;
+    if (typeof dto.customerName !== 'string' || dto.customerName.trim().length < 2) {
+      throw new BadRequestException('customerName is required for EXTRA_HOUR');
+    }
+    if (typeof dto.customerPhone !== 'string' || dto.customerPhone.trim().length < 6) {
+      throw new BadRequestException('customerPhone is required for EXTRA_HOUR');
+    }
+  }
+
+  private async loadResourceAndTenant(resourceId: string) {
+    const p = this.prismaAny();
+    const model = this.getResourceModelName();
+
+    const resource = await p[model].findFirst({
+      where: { id: resourceId },
+    });
+
+    if (!resource) throw new NotFoundException('Desk not found');
+    if (!resource.tenantId) throw new BadRequestException(`${model} has no tenantId`);
+    return { resource, tenantId: resource.tenantId as string, model };
+  }
+
+  private async loadMenuItems(tenantId: string, menuItemIds: string[]) {
+    const p = this.prismaAny();
+    const menuItems = await p.menuItem.findMany({
+      where: { id: { in: menuItemIds }, tenantId },
+    });
+
+    if (!menuItems || menuItems.length !== menuItemIds.length) {
+      throw new BadRequestException('Invalid menu item(s) for this tenant');
+    }
+    return menuItems as any[];
+  }
+
+  private buildOrderItems(menuItems: any[], items: NormalizedItem[]) {
+    const byId = new Map(menuItems.map((mi) => [mi.id, mi]));
+    const orderItems = items.map((i) => {
+      const mi = byId.get(i.menuItemId);
+      if (!mi) throw new BadRequestException('Invalid item');
+      const unitPriceEgp = this.resolvePriceEgp(mi);
+      return {
+        menuItemId: mi.id,
+        qty: i.qty,
+        unitPriceEgp,
+        lineTotalEgp: unitPriceEgp * i.qty,
+      };
+    });
+    const totalEgp = orderItems.reduce((s, li) => s + li.lineTotalEgp, 0);
+    return { orderItems, totalEgp };
+  }
+
+  // --------- API used elsewhere ----------
   async listForTenant(tenantId: string) {
-    return this.prisma.order.findMany({
-      where: { tenantId, deleted: false },
+    const p = this.prismaAny();
+    return p.order.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        table: true,
-        orderItems: { include: { menuItem: true } },
-      },
+      include: { orderItems: true },
+      take: 200,
     });
   }
 
-  async listForTenantSince(tenantId: string, since: Date) {
-    return this.prisma.order.findMany({
-      where: { tenantId, deleted: false, createdAt: { gte: since } },
+  async listForTenantSince(tenantId: string, since: any) {
+    const p = this.prismaAny();
+    const d = since instanceof Date ? since : new Date(since);
+    if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid since date');
+    return p.order.findMany({
+      where: { tenantId, createdAt: { gte: d } },
       orderBy: { createdAt: 'desc' },
-      include: {
-        table: true,
-        orderItems: { include: { menuItem: true } },
-      },
+      include: { orderItems: true },
     });
   }
 
   async getForTenant(id: string, tenantId: string) {
-    const order = await this.prisma.order.findFirst({
-      where: { id, tenantId, deleted: false },
-      include: { table: true, orderItems: { include: { menuItem: true } } },
+    const p = this.prismaAny();
+    const order = await p.order.findFirst({
+      where: { id, tenantId },
+      include: { orderItems: true },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
   }
 
-
-  async createGuestOrder(dto: CreateGuestOrderDto) {
-    const table = await this.prisma.table.findFirst({
-      where: { id: dto.tableId, deleted: false },
-    });
-    if (!table) throw new NotFoundException('Desk not found');
-
-    const tenantId = table.tenantId;
-    return this.createOrderInternal(table.id, tenantId, dto, 'GUEST');
-  }
-
-  // Owner creates a future booking or a walk-in session (auth required)
-  async createOwnerOrder(tenantId: string, dto: CreateGuestOrderDto) {
-    const table = await this.prisma.table.findFirst({
-      where: { id: dto.tableId, tenantId, deleted: false },
-    });
-    if (!table) throw new NotFoundException('Desk not found');
-    return this.createOrderInternal(table.id, tenantId, dto, 'STAFF');
-  }
-
   async upcomingForTenant(tenantId: string) {
-    const now = new Date();
-    return this.prisma.order.findMany({
-      where: {
-        tenantId,
-        deleted: false,
-        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.COMPLETED] },
-        startAt: { gt: now },
-      },
-      orderBy: { startAt: 'asc' },
-      include: { table: true, orderItems: { include: { menuItem: true } } },
+    const p = this.prismaAny();
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return p.order.findMany({
+      where: { tenantId, createdAt: { gte: start } },
+      orderBy: { createdAt: 'desc' },
+      include: { orderItems: true },
+      take: 50,
     });
   }
 
-  private async createOrderInternal(
-    tableId: string,
-    tenantId: string,
-    dto: CreateGuestOrderDto,
-    source: 'GUEST' | 'STAFF',
-  ) {
-    const items = (dto.items || []).filter(i => i.quantity > 0);
-    if (items.length === 0) throw new BadRequestException('No items');
+  async createGuestOrder(dto: CreateOrderDtoLike) {
+    const p = this.prismaAny();
 
-    const ids = items.map(i => i.menuItemId);
-    const menuItems = await this.prisma.menuItem.findMany({
-      where: { id: { in: ids }, tenantId, deleted: false },
-    });
+    const resourceId = this.getResourceId(dto);
+    const { resource, tenantId, model } = await this.loadResourceAndTenant(resourceId);
 
-    const byId = new Map(menuItems.map(mi => [mi.id, mi]));
+    const items = this.normalizeItems(dto);
+    const menuItemIds = items.map((i) => i.menuItemId);
 
-    // Identify "Extra hour" and "Coffee" by SKU (stable even if names change)
-    let hoursQty = 0;
-    let coffeeQty = 0;
+    const menuItems = await this.loadMenuItems(tenantId, menuItemIds);
+    const requireCustomer = this.mustRequireCustomerInfo(menuItems);
+    this.validateCustomerInfoIfNeeded(requireCustomer, dto);
 
-    for (const it of items) {
-      const mi = byId.get(it.menuItemId);
-      if (!mi) throw new BadRequestException('Invalid item');
+    const { orderItems, totalEgp } = this.buildOrderItems(menuItems, items);
 
-      const isExtraHour = mi.sku === SKU_EXTRA_HOUR || norm(mi.name) === 'extra hour';
-      const isCoffee = mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee';
+    try {
+      const order = await p.order.create({
+        data: {
+          tenantId,
+          ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
 
-      if (isExtraHour) hoursQty += it.quantity;
-      if (isCoffee) coffeeQty += it.quantity;
-    }
+          totalEgp,
+          customerName: requireCustomer ? dto.customerName!.trim() : null,
+          customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
+          notes: typeof dto.notes === 'string' && dto.notes.trim() ? dto.notes.trim() : null,
 
-    if (hoursQty <= 0) {
-      throw new BadRequestException('You must add at least 1 hour (Extra hour)');
-    }
-
-    const table = await this.prisma.table.findFirst({
-      where: { id: tableId, tenantId, deleted: false },
-      select: { id: true, name: true, hourlyRate: true },
-    });
-    if (!table) throw new NotFoundException('Desk not found');
-
-    // Start/end time for the session or future booking
-    const now = new Date();
-    let startAt = now;
-    if (dto.startAt) {
-      const parsed = new Date(dto.startAt);
-      if (isNaN(parsed.getTime())) throw new BadRequestException('Invalid start time');
-      // Reject clearly-in-the-past bookings
-      if (parsed.getTime() < now.getTime() - 5 * 60 * 1000) {
-        throw new BadRequestException('Start time is in the past');
-      }
-      // If it's "about now" (within 5 minutes), treat it as now
-      startAt = parsed.getTime() < now.getTime() + 5 * 60 * 1000 ? now : parsed;
-    }
-
-    const endAt = new Date(startAt.getTime() + hoursQty * 60 * 60 * 1000);
-
-    // Prevent double-booking the same desk
-    const overlap = await this.prisma.order.findFirst({
-      where: {
-        tenantId,
-        tableId,
-        deleted: false,
-        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.COMPLETED] },
-        startAt: { lt: endAt },
-        endAt: { gt: startAt },
-      },
-      select: { id: true, startAt: true, endAt: true },
-    });
-
-    if (overlap) {
-      throw new BadRequestException('Desk is already booked for that time slot');
-    }
-
-    const freeCoffee = hoursQty;
-    const freeCoffeeUsed = Math.min(coffeeQty, freeCoffee);
-    const paidCoffeeQty = Math.max(0, coffeeQty - freeCoffee);
-
-    // Build orderItems; we may split coffee into free and paid lines.
-    const orderItemsData: Array<{ menuItemId: string; quantity: number; price: number; }> = [];
-
-    for (const it of items) {
-      const mi = byId.get(it.menuItemId)!;
-      const isCoffee = mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee';
-      const isExtraHour = mi.sku === SKU_EXTRA_HOUR || norm(mi.name) === 'extra hour';
-
-      if (isCoffee) {
-        // We'll add coffee lines after the loop
-        continue;
-      }
-
-      orderItemsData.push({
-        menuItemId: mi.id,
-        quantity: it.quantity,
-        price: isExtraHour ? table.hourlyRate : mi.price,
-      });
-    }
-
-    // Add coffee line(s)
-    const coffeeMi = menuItems.find(mi => mi.sku === SKU_COFFEE || norm(mi.name) === 'coffee');
-    if (coffeeMi) {
-      if (freeCoffeeUsed > 0) {
-        orderItemsData.push({
-          menuItemId: coffeeMi.id,
-          quantity: freeCoffeeUsed,
-          price: 0,
-        });
-      }
-      if (paidCoffeeQty > 0) {
-        orderItemsData.push({
-          menuItemId: coffeeMi.id,
-          quantity: paidCoffeeQty,
-          price: coffeeMi.price,
-        });
-      }
-    }
-
-    const total = orderItemsData.reduce((sum, li) => sum + li.price * li.quantity, 0);
-
-    const isFutureBooking = startAt.getTime() > now.getTime() + 5 * 60 * 1000;
-
-    const order = await this.prisma.order.create({
-      data: {
-        tenantId,
-        tableId,
-        total,
-        status: isFutureBooking ? OrderStatus.CONFIRMED : OrderStatus.PENDING,
-        customerName: dto.customerName,
-        customerPhone: dto.customerPhone,
-        customerNationalIdPath: dto.customerNationalIdPath,
-        startAt,
-        endAt,
-        orderItems: {
-          create: orderItemsData,
-        },
-      },
-      include: { table: true, orderItems: { include: { menuItem: true } } },
-    });
-
-    void this.sms
-      .sendToAdmin(
-        `🧾 New order: ${order.table.name} | ${order.orderItems.length} items | total ${order.total}${order.customerName ? ` | ${order.customerName}` : ''}${order.customerPhone ? ` (${order.customerPhone})` : ''}`,
-      )
-      .then((r) => {
-        if (!r.ok) this.logger.warn(`[SMS] ${r.error}`);
-      });
-
-    // Also add to the in-app "requests" queue for admin/staff.
-    if (source === 'GUEST') {
-      const summary = order.orderItems
-        .map((oi) => `${oi.quantity}x ${oi.menuItem?.name ?? 'Item'}`)
-        .join(', ');
-      await this.prisma.tableRequest
-        .create({
-          data: {
-            tenantId,
-            tableId,
-            requestType: RequestType.OTHER,
-            message: `New guest order: ${summary || 'Order'} (Total ${order.total} EGP)`,
-            isActive: true,
+          orderItems: {
+            create: orderItems.map((li) => ({
+              menuItemId: li.menuItemId,
+              qty: li.qty,
+              unitPriceEgp: li.unitPriceEgp,
+              lineTotalEgp: li.lineTotalEgp,
+            })),
           },
-        })
-        .catch(() => void 0);
-    }
+        },
+        include: { orderItems: true },
+      });
 
-    return order;
+      return { ok: true, order };
+    } catch (e: any) {
+      throw new BadRequestException(`Order create failed: ${e?.message || e}`);
+    }
   }
 
-  async updateStatus(id: string, tenantId: string, status: OrderStatus) {
+  async createOwnerOrder(tenantId: string, dto: CreateOrderDtoLike) {
+    const p = this.prismaAny();
+
+    const resourceId = this.getResourceId(dto);
+    const { resource, tenantId: resourceTenantId, model } = await this.loadResourceAndTenant(resourceId);
+    if (resourceTenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
+
+    const items = this.normalizeItems(dto);
+    const menuItemIds = items.map((i) => i.menuItemId);
+
+    const menuItems = await this.loadMenuItems(tenantId, menuItemIds);
+    const requireCustomer = this.mustRequireCustomerInfo(menuItems);
+    this.validateCustomerInfoIfNeeded(requireCustomer, dto);
+
+    const { orderItems, totalEgp } = this.buildOrderItems(menuItems, items);
+
+    try {
+      const order = await p.order.create({
+        data: {
+          tenantId,
+          ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
+
+          totalEgp,
+          customerName: requireCustomer ? dto.customerName!.trim() : null,
+          customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
+          notes: typeof dto.notes === 'string' && dto.notes.trim() ? dto.notes.trim() : null,
+
+          orderItems: {
+            create: orderItems.map((li) => ({
+              menuItemId: li.menuItemId,
+              qty: li.qty,
+              unitPriceEgp: li.unitPriceEgp,
+              lineTotalEgp: li.lineTotalEgp,
+            })),
+          },
+        },
+        include: { orderItems: true },
+      });
+
+      return { ok: true, order };
+    } catch (e: any) {
+      throw new BadRequestException(`Order create failed: ${e?.message || e}`);
+    }
+  }
+
+  async updateStatus(id: string, tenantId: string, status: any) {
+    const p = this.prismaAny();
+    if (!status) throw new BadRequestException('status required');
+
     await this.getForTenant(id, tenantId);
-    return this.prisma.order.update({ where: { id }, data: { status } });
+
+    try {
+      const order = await p.order.update({
+        where: { id },
+        data: { status },
+      });
+      return { ok: true, order };
+    } catch (e: any) {
+      throw new BadRequestException(`Update failed: ${e?.message || e}`);
+    }
   }
 }
