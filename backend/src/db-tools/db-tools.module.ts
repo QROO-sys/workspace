@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from '../auth/auth.module';
 import { DbToolsController } from './db-tools.controller';
+import { SessionsModule } from '../sessions/sessions.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [SessionsModule],
   controllers: [DbToolsController],
 })
 export class DbToolsModule {}

@@ -1,50 +1,22 @@
-import { BadRequestException, Controller, Post, Req, UseGuards } from '@nestjs/common';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OwnerGuard } from '../common/guards/owner.guard';
-
-const execFileAsync = promisify(execFile);
+import { SessionsService } from '../sessions/sessions.service';
 
 @Controller('db-tools')
-@UseGuards(JwtAuthGuard, OwnerGuard)
 export class DbToolsController {
-  private ensureEnabled() {
-    const enabled = (process.env.ENABLE_DB_TOOLS || '').toLowerCase() === 'true';
-    if (!enabled) {
-      throw new BadRequestException('DB tools are disabled. Set ENABLE_DB_TOOLS=true in backend .env');
-    }
+  constructor(private readonly sessions: SessionsService) {}
+
+  // ✅ fixes "Cannot GET /db-tools/summary"
+  @UseGuards(JwtAuthGuard)
+  @Get('summary')
+  async summary(@Req() req: any) {
+    return this.sessions.dbSummary(req);
   }
 
-  @Post('push')
-  async pushSchema(@Req() _req: any) {
-    this.ensureEnabled();
-    const { stdout, stderr } = await execFileAsync('npx', ['prisma', 'db', 'push', '--schema', 'prisma/schema.prisma'], {
-      cwd: process.cwd(),
-      env: process.env,
-    });
-    return { ok: true, stdout, stderr };
-  }
-
-  @Post('seed')
-  async seed(@Req() _req: any) {
-    this.ensureEnabled();
-    const { stdout, stderr } = await execFileAsync('npm', ['run', 'seed'], {
-      cwd: process.cwd(),
-      env: process.env,
-    });
-    return { ok: true, stdout, stderr };
-  }
-
-  @Post('reset')
-  async resetDb(@Req() _req: any) {
-    this.ensureEnabled();
-    // Destructive: resets schema & data.
-    const { stdout, stderr } = await execFileAsync(
-      'npx',
-      ['prisma', 'migrate', 'reset', '--schema', 'prisma/schema.prisma', '--force', '--skip-seed'],
-      { cwd: process.cwd(), env: process.env },
-    );
-    return { ok: true, stdout, stderr };
+  // ✅ fixes "Cannot GET /db-tools/export"
+  @UseGuards(JwtAuthGuard)
+  @Get('export')
+  async export(@Req() req: any, @Query('kind') kind?: string) {
+    return this.sessions.dbExport(req, kind || '');
   }
 }
