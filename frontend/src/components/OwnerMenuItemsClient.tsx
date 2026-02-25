@@ -1,166 +1,243 @@
-"use client";
+'use client';
 
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '@/lib/api';
 
-type Category = { id: string; name: string };
-type MenuItem = { id: string; sku: string; name: string; description?: string | null; price: number; categoryId: string };
+type DeskLike = { id: string; name?: string | null };
 
-export default function OwnerMenuItemsClient({ items, categories }: { items: MenuItem[]; categories: Category[] }) {
-  const router = useRouter();
-  const [sku, setSku] = useState("");
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState<number>(0);
-  const [description, setDescription] = useState("");
-  const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
+type MenuItem = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  price?: number | null;
+  priceEgp?: number | null;
+  priceEGP?: number | null;
+  unitPrice?: number | null;
+};
+
+function priceOf(mi: any) {
+  return mi?.priceEgp ?? mi?.priceEGP ?? mi?.unitPrice ?? mi?.price ?? null;
+}
+
+export default function OwnerMenuItemsClient() {
   const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [edits, setEdits] = useState<Record<string, { name: string; price: string; description: string }>>(() =>
-    Object.fromEntries(
-      items.map((it) => [
-        it.id,
-        {
-          name: it.name,
-          price: String(it.price ?? 0),
-          description: it.description || "",
-        },
-      ]),
-    ),
-  );
+  const [counterOrder, setCounterOrder] = useState(true);
+  const [selectedDeskId, setSelectedDeskId] = useState('');
 
-  const catsById = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories]);
+  const [desks, setDesks] = useState<DeskLike[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [cart, setCart] = useState<Record<string, number>>({});
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    if (!sku.trim()) { setErr('SKU is required.'); return; }
-    if (!name.trim()) return;
-    if (!categoryId) { setErr("Create a category first."); return; }
+  useEffect(() => {
+    let cancelled = false;
 
-    setBusy(true);
-    try {
-      await apiFetch("/menu-items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, name, price: Number(price), description: description || undefined, categoryId }),
-      });
-      setSku("");
-      setName("");
-      setPrice(0);
-      setDescription("");
-      router.refresh();
-    } catch (e: any) {
-      setErr(e?.message || "Failed to create");
-    } finally {
-      setBusy(false);
+    (async () => {
+      setErr(null);
+      try {
+        // desks (fallback to tables if needed)
+        const desksResp = await apiFetch('/desks', { method: 'GET' }).catch(async () => {
+          return await apiFetch('/tables', { method: 'GET' }).catch(() => []);
+        });
+
+        // menu items (fallbacks)
+        const menuResp = await apiFetch('/menu-items', { method: 'GET' }).catch(async () => {
+          return await apiFetch('/menu', { method: 'GET' }).catch(() => []);
+        });
+
+        if (cancelled) return;
+
+        setDesks(Array.isArray(desksResp) ? desksResp : []);
+        setMenuItems(Array.isArray(menuResp) ? menuResp : []);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || 'Failed to load');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const cartLines = useMemo(() => {
+    const byId = new Map(menuItems.map((m) => [m.id, m]));
+    return Object.entries(cart)
+      .filter(([, qty]) => qty > 0)
+      .map(([id, qty]) => ({ id, qty, item: byId.get(id) }));
+  }, [cart, menuItems]);
+
+  const totalEstimate = useMemo(() => {
+    let t = 0;
+    for (const line of cartLines) {
+      const p = priceOf(line.item);
+      if (typeof p === 'number') t += p * line.qty;
     }
+    return t;
+  }, [cartLines]);
+
+  function inc(id: string) {
+    setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   }
 
-  async function remove(id: string) {
-    if (!confirm("Delete this item?")) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await apiFetch(`/menu-items/${id}`, { method: "DELETE" });
-      router.refresh();
-    } catch (e: any) {
-      setErr(e?.message || "Failed to delete");
-    } finally {
-      setBusy(false);
-    }
+  function dec(id: string) {
+    setCart((prev) => {
+      const cur = prev[id] || 0;
+      return { ...prev, [id]: Math.max(0, cur - 1) };
+    });
   }
 
-  async function save(id: string) {
-    setBusy(true);
-    setErr(null);
-    try {
-      const e = edits[id];
-      const p = Number(e?.price || 0);
-      if (!e?.name?.trim()) throw new Error("Name is required");
-      if (!Number.isFinite(p) || p < 0) throw new Error("Price must be a valid number");
+  function clearCart() {
+    setCart({});
+  }
 
-      await apiFetch(`/menu-items/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: e.name.trim(), price: p, description: e.description || null }),
+  async function checkout() {
+    setErr(null);
+    setOkMsg(null);
+
+    const items = cartLines.map((l) => ({
+      menuItemId: l.id,
+      quantity: l.qty, // IMPORTANT: backend expects quantity, not qty
+    }));
+
+    if (items.length === 0) {
+      setErr('Cart is empty.');
+      return;
+    }
+
+    if (!counterOrder && !selectedDeskId) {
+      setErr('Select a desk/table or enable Counter Order.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const payload: any = {
+        counterOrder: !!counterOrder,
+        items,
+      };
+
+      if (!counterOrder) {
+        // your backend supports either tableId or deskId; your tenant appears table-based
+        payload.tableId = selectedDeskId;
+      }
+
+      const created = await apiFetch('/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       });
-      router.refresh();
+
+      setOkMsg(`Order created: ${created?.order?.id || 'OK'}`);
+      clearCart();
     } catch (e: any) {
-      setErr(e?.message || "Failed to update");
+      setErr(e?.message || 'Order could not be created');
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="mt-6">
-      <div className="rounded border bg-white p-4">
-        <div className="text-sm text-gray-700">
-          <b>Rule:</b> One coffee is free per paid hour. The backend applies the discount using SKUs: <b>Extra hour = 001</b> and <b>Coffee = 002</b>. (Names can change; the SKU rule stays stable.)
+    <div style={{ padding: 16 }}>
+      {err && (
+        <div style={{ border: '1px solid #f2c2c2', background: '#fff5f5', padding: 12, borderRadius: 10, marginBottom: 12 }}>
+          <b>Error:</b> {err}
         </div>
+      )}
+      {okMsg && (
+        <div style={{ border: '1px solid #bfe3bf', background: '#f4fff4', padding: 12, borderRadius: 10, marginBottom: 12 }}>
+          {okMsg}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="checkbox" checked={counterOrder} onChange={(e) => setCounterOrder(e.target.checked)} />
+          Counter order (no desk/table)
+        </label>
+
+        {!counterOrder && (
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            Desk/Table:
+            <select value={selectedDeskId} onChange={(e) => setSelectedDeskId(e.target.value)} style={{ padding: 8 }}>
+              <option value="">Select…</option>
+              {desks.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name || d.id.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
-      <form onSubmit={create} className="mt-4 rounded border bg-white p-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input className="rounded border p-2" placeholder="SKU (e.g., 001)" value={sku} onChange={(e) => setSku(e.target.value)} />
-          <input className="rounded border p-2" placeholder="Item name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="rounded border p-2" placeholder="Price (EGP)" value={price} onChange={(e) => setPrice(Number(e.target.value))} type="number" min="0" />
-          <select className="rounded border p-2" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <input className="rounded border p-2" placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <div>
+          <h2 style={{ marginTop: 0 }}>Items</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            {menuItems.map((mi) => (
+              <div key={mi.id} style={{ border: '1px solid #eee', padding: 12, borderRadius: 12 }}>
+                <div style={{ fontWeight: 700 }}>{mi.name}</div>
+                <div style={{ opacity: 0.7 }}>{mi.sku || ''}</div>
+                <div style={{ marginTop: 8 }}>
+                  {typeof priceOf(mi) === 'number' ? `${priceOf(mi)} EGP` : <span style={{ opacity: 0.6 }}>Price</span>}
+                </div>
+                <button onClick={() => inc(mi.id)} style={{ marginTop: 10, padding: '8px 12px' }}>
+                  Add
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {err && <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{err}</div>}
+        <div>
+          <h2 style={{ marginTop: 0 }}>Cart</h2>
+          {cartLines.length === 0 ? (
+            <div style={{ opacity: 0.7 }}>No items yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {cartLines.map((l) => (
+                <div key={l.id} style={{ border: '1px solid #eee', padding: 10, borderRadius: 12 }}>
+                  <div style={{ fontWeight: 700 }}>{l.item?.name || l.id}</div>
+                  <div style={{ opacity: 0.75 }}>{l.item?.sku || ''}</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                    <button onClick={() => dec(l.id)} style={{ padding: '6px 10px' }}>
+                      -
+                    </button>
+                    <div style={{ minWidth: 30, textAlign: 'center' }}>{l.qty}</div>
+                    <button onClick={() => inc(l.id)} style={{ padding: '6px 10px' }}>
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
 
-        <button className="mt-3 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-60" disabled={busy} type="submit">
-          Add item
-        </button>
-      </form>
-
-      <div className="mt-6 space-y-2">
-        {items.map((it) => (
-          <div key={it.id} className="rounded border bg-white p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="font-medium">[{it.sku}]</div>
-              <div className="text-xs text-gray-600">
-                {catsById.get(it.categoryId)?.name || "Category"}
+              <div style={{ borderTop: '1px solid #eee', paddingTop: 10 }}>
+                <div style={{ fontWeight: 800 }}>Estimate: {totalEstimate} EGP</div>
+                <div style={{ opacity: 0.7, marginTop: 4 }}>Backend calculates final total.</div>
               </div>
-              <div className="ml-auto flex gap-2">
-                <button className="rounded border px-2 py-1 text-xs" disabled={busy} onClick={() => save(it.id)} type="button">
-                  Save
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={checkout} disabled={busy} style={{ padding: '10px 14px' }}>
+                  {busy ? 'Creating…' : 'Checkout'}
                 </button>
-                <button className="rounded border px-2 py-1 text-xs" disabled={busy} onClick={() => remove(it.id)} type="button">
-                  Delete
+                <button onClick={clearCart} disabled={busy} style={{ padding: '10px 14px' }}>
+                  Clear
                 </button>
               </div>
-            </div>
 
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              <input
-                className="rounded border p-2 text-sm"
-                value={edits[it.id]?.name ?? it.name}
-                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), name: e.target.value } }))}
-              />
-              <input
-                className="rounded border p-2 text-sm"
-                type="number"
-                min="0"
-                value={edits[it.id]?.price ?? String(it.price)}
-                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), price: e.target.value } }))}
-              />
-              <input
-                className="rounded border p-2 text-sm"
-                placeholder="Description"
-                value={edits[it.id]?.description ?? (it.description || "")}
-                onChange={(e) => setEdits((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] || { name: it.name, price: String(it.price), description: it.description || "" }), description: e.target.value } }))}
-              />
+              {counterOrder ? (
+                <div style={{ marginTop: 6, opacity: 0.75 }}>
+                  Counter orders are not tied to any desk/table. EXTRA_HOUR is blocked.
+                </div>
+              ) : (
+                <div style={{ marginTop: 6, opacity: 0.75 }}>
+                  Desk/Table orders are attached to the selected desk/table.
+                </div>
+              )}
             </div>
-          </div>
-        ))}
-        {items.length === 0 && <div className="text-sm text-gray-600">No menu items yet.</div>}
+          )}
+        </div>
       </div>
     </div>
   );
