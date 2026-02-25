@@ -162,6 +162,19 @@ enum BookingStatus {
   CANCELLED
 }
 
+model QrCode {
+  id        String   @id @default(cuid())
+  tenantId  String
+  type      String
+  entityId  String
+  target    String
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, type, entityId])
+  @@index([tenantId, type])
+}
+
 model Booking {
   id              String        @id @default(uuid())
   tenant          Tenant        @relation(fields: [tenantId], references: [id])
