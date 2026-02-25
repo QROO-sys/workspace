@@ -19,7 +19,6 @@ type CreateOrderDtoLike = {
 
   customerName?: string;
   customerPhone?: string;
-  notes?: string;
 };
 
 type NormalizedItem = { menuItemId: string; qty: number };
@@ -38,7 +37,7 @@ export class OrderService {
     return secret;
   }
 
-  // controller compatibility
+  // Controller compatibility
   async list(req: any) {
     const tenantId = req?.user?.tenantId;
     if (!tenantId) throw new BadRequestException('tenantId missing');
@@ -155,7 +154,7 @@ export class OrderService {
     if (payload.resourceId !== expectedId) throw new BadRequestException('Agreement desk mismatch');
   }
 
-  // --- list APIs ---
+  // List APIs
   async listForTenant(tenantId: string) {
     const p = this.prismaAny();
     return p.order.findMany({
@@ -177,6 +176,7 @@ export class OrderService {
     });
   }
 
+  // Create (owner/staff)
   async createOwnerOrder(tenantId: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
 
@@ -184,7 +184,7 @@ export class OrderService {
     const { resource, tenantId: resourceTenantId, model } = await this.loadResourceAndTenant(resourceId);
     if (resourceTenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
 
-    // HARD GATE: must have valid agreement token for this desk/table
+    // HARD GATE
     this.enforceAgreement(dto, tenantId, model, resource.id);
 
     const items = this.normalizeItems(dto);
@@ -201,13 +201,9 @@ export class OrderService {
         data: {
           tenantId,
           ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
-
-          total, // REQUIRED by your schema
-
+          total,
           customerName: requireCustomer ? dto.customerName!.trim() : null,
           customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
-          notes: typeof dto.notes === 'string' && dto.notes.trim() ? dto.notes.trim() : null,
-
           orderItems: {
             create: orderItems.map((li) => ({
               menuItemId: li.menuItemId,
