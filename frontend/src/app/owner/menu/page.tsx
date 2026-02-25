@@ -1,30 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "react-qr-code";
 import { apiFetch } from "@/lib/api";
 
 type Category = { id: string; name: string };
 type Item = { id: string; name: string; sku: string; price: number; categoryId?: string };
+type Desk = { id: string; name: string };
 
 function money(n: any) {
   const v = Number(n);
-  if (!Number.isFinite(v)) return "";
+  if (!Number.isFinite(v)) return "0";
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 }
 
 export default function OwnerMenuPage() {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [desks, setDesks] = useState<{ id: string; name: string }[]>([]);
+  const [desks, setDesks] = useState<Desk[]>([]);
   const [deskId, setDeskId] = useState<string>("");
 
   const [activeCatId, setActiveCatId] = useState<string>("ALL");
   const [cart, setCart] = useState<Record<string, number>>({});
+  const [note, setNote] = useState<string>("");
+
+  // Only needed if cart includes EXTRA_HOUR
+  const [customerName, setCustomerName] = useState<string>("");
+  const [customerPhone, setCustomerPhone] = useState<string>("");
+
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState("");
+
+  const handledAddRef = useRef<string>("");
 
   async function load() {
     setErr(null);
@@ -40,34 +51,27 @@ export default function OwnerMenuPage() {
       const itemArr = Array.isArray(itemRes) ? itemRes : (itemRes as any)?.menuItems || (itemRes as any)?.items || [];
       const deskArr = Array.isArray(deskRes) ? deskRes : (deskRes as any)?.desks || [];
 
-      const normCats: Category[] = catArr
-        .map((c: any) => ({
-          id: String(c?.id ?? c?._id ?? ""),
-          name: String(c?.name ?? ""),
-        }))
+      const normCats: Category[] = (catArr as any[])
+        .map((c: any) => ({ id: String(c?.id ?? ""), name: String(c?.name ?? "") }))
         .filter((c: Category) => Boolean(c.id && c.name));
 
-      const normItems: Item[] = itemArr
+      const normItems: Item[] = (itemArr as any[])
         .map((m: any) => ({
-          id: String(m?.id ?? m?._id ?? ""),
-          name: String(m?.name ?? m?.title ?? ""),
+          id: String(m?.id ?? ""),
+          name: String(m?.name ?? ""),
           sku: String(m?.sku ?? ""),
           price: Number(m?.price ?? 0),
           categoryId: String(m?.categoryId ?? m?.category?.id ?? ""),
         }))
         .filter((i: Item) => Boolean(i.id && i.name));
 
-      const normDesks = deskArr
-        .map((d: any, i: number) => ({
-          id: String(d?.id ?? d?._id ?? ""),
-          name: String(d?.name ?? `Desk ${i + 1}`),
-        }))
-        .filter((d: { id: string; name: string }) => Boolean(d.id));
+      const normDesks: Desk[] = (deskArr as any[])
+        .map((d: any, idx: number) => ({ id: String(d?.id ?? ""), name: String(d?.name ?? `Desk ${idx + 1}`) }))
+        .filter((d: Desk) => Boolean(d.id));
 
       setCategories(normCats);
       setItems(normItems);
       setDesks(normDesks);
-
       if (!deskId && normDesks.length) setDeskId(normDesks[0].id);
     } catch (e: any) {
       setErr(e?.message || "Failed to load menu");
@@ -80,6 +84,22 @@ export default function OwnerMenuPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-add item from QR: /owner/menu?add=<itemId>
+  useEffect(() => {
+    if (!items.length) return;
+    if (typeof window === "undefined") return;
+
+    const add = new URLSearchParams(window.location.search).get("add") || "";
+    if (!add) return;
+    if (handledAddRef.current === add) return;
+
+    const exists = items.find((x) => x.id === add);
+    if (!exists) return;
+
+    handledAddRef.current = add;
+    setCart((c) => ({ ...c, [add]: (c[add] || 0) + 1 }));
+  }, [items]);
 
   const filteredItems = useMemo(() => {
     if (activeCatId === "ALL") return items;
@@ -99,10 +119,15 @@ export default function OwnerMenuPage() {
 
   const cartTotal = useMemo(() => cartLines.reduce((a, l) => a + l.total, 0), [cartLines]);
 
-  function add(id: string) {
+  const hasExtraHour = useMemo(
+    () => cartLines.some((l) => String(l.item.sku || "").toUpperCase() === "EXTRA_HOUR"),
+    [cartLines]
+  );
+
+  function addItem(id: string) {
     setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
   }
-  function remove(id: string) {
+  function removeItem(id: string) {
     setCart((c) => {
       const next = { ...c };
       const q = (next[id] || 0) - 1;
@@ -118,6 +143,13 @@ export default function OwnerMenuPage() {
     if (!deskId) return setErr("Select a desk first.");
     if (!cartLines.length) return setErr("Cart is empty.");
 
+    // ✅ only require customer details if EXTEND TIME is included
+    if (hasExtraHour) {
+      if (!customerName.trim() || !customerPhone.trim()) {
+        return setErr("Customer name and phone are required for Extend time.");
+      }
+    }
+
     setBusy(true);
     try {
       await apiFetch("/orders", {
@@ -125,16 +157,20 @@ export default function OwnerMenuPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableId: deskId,
+          notes: note || "",
           paymentMethod: "CASH",
           paymentStatus: "PENDING",
-          notes: note || "",
+          customerName: hasExtraHour ? customerName.trim() : undefined,
+          customerPhone: hasExtraHour ? customerPhone.trim() : undefined,
           items: cartLines.map((l) => ({ menuItemId: l.item.id, quantity: l.qty })),
         }),
       });
 
       setCart({});
       setNote("");
-      alert("Order created (cash pending).");
+      setCustomerName("");
+      setCustomerPhone("");
+      alert("Order created.");
     } catch (e: any) {
       setErr(e?.message || "Order failed");
     } finally {
@@ -149,7 +185,7 @@ export default function OwnerMenuPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-2xl font-bold">Menu</div>
-          <div className="text-sm text-gray-600">Click tiles to add items to an order.</div>
+          <div className="text-sm text-gray-600">Click tiles or scan item QRs to add to cart.</div>
         </div>
         <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={load} type="button">
           Refresh
@@ -157,15 +193,13 @@ export default function OwnerMenuPage() {
       </div>
 
       {err && (
-        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">
-          {err}
-        </div>
+        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{err}</div>
       )}
 
       <div className="rounded border bg-white p-4 space-y-3">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-sm">
-            Desk (required to order)
+            Desk (required)
             <select className="mt-1 w-full rounded border p-2" value={deskId} onChange={(e) => setDeskId(e.target.value)}>
               {desks.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -180,8 +214,22 @@ export default function OwnerMenuPage() {
             <input className="mt-1 w-full rounded border p-2" value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
         </div>
+
+        {hasExtraHour && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block text-sm">
+              Customer name (required for Extend time)
+              <input className="mt-1 w-full rounded border p-2" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              Customer phone (required for Extend time)
+              <input className="mt-1 w-full rounded border p-2" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
+            </label>
+          </div>
+        )}
       </div>
 
+      {/* Categories */}
       <div className="space-y-2">
         <div className="text-sm font-semibold">Categories</div>
         <div className="flex flex-wrap gap-2">
@@ -202,30 +250,42 @@ export default function OwnerMenuPage() {
               {c.name}
             </button>
           ))}
-          {!categories.length && <div className="text-sm text-gray-600">No categories found.</div>}
         </div>
       </div>
 
+      {/* Items with QR */}
       <div className="space-y-2">
         <div className="text-sm font-semibold">Items</div>
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredItems.map((i) => (
-            <button
-              key={i.id}
-              type="button"
-              onClick={() => add(i.id)}
-              className="rounded border bg-white p-4 text-left hover:bg-gray-50"
-            >
-              <div className="font-semibold">{i.name}</div>
-              <div className="text-xs text-gray-600 mt-1">SKU: {i.sku}</div>
-              <div className="text-sm mt-2">{money(i.price)} EGP</div>
-              <div className="text-xs text-gray-500 mt-2">Click to add</div>
-            </button>
-          ))}
+          {filteredItems.map((i) => {
+            const qrValue = `${origin}/owner/menu?add=${encodeURIComponent(i.id)}`;
+            return (
+              <div key={i.id} className="rounded border bg-white p-4">
+                <button type="button" className="w-full text-left hover:opacity-90" onClick={() => addItem(i.id)}>
+                  <div className="font-semibold">{i.name}</div>
+                  <div className="text-xs text-gray-600 mt-1">SKU: {i.sku}</div>
+                  <div className="text-sm mt-2">{money(i.price)} EGP</div>
+                  <div className="text-xs text-gray-500 mt-1">Click to add</div>
+                </button>
+
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="rounded bg-gray-50 p-2">
+                    <QRCode value={qrValue} size={80} />
+                  </div>
+                  <div className="text-xs text-gray-600 break-all">
+                    QR: <span className="font-mono">{qrValue}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
           {!filteredItems.length && <div className="text-sm text-gray-600">No items for this category.</div>}
         </div>
       </div>
 
+      {/* Cart */}
       <div className="rounded border bg-white p-4 space-y-2">
         <div className="font-semibold">Cart</div>
 
@@ -238,10 +298,10 @@ export default function OwnerMenuPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="text-sm">{money(l.total)} EGP</div>
-                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => remove(l.item.id)}>
+                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => removeItem(l.item.id)}>
                     -
                   </button>
-                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => add(l.item.id)}>
+                  <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" type="button" onClick={() => addItem(l.item.id)}>
                     +
                   </button>
                 </div>
