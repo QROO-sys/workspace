@@ -6,8 +6,10 @@ const EXTRA_HOUR_SKU = 'EXTRA_HOUR';
 const POLICY_VERSION = 'v0.1';
 
 type CreateOrderDtoLike = {
+  // desk/tables optional now (supports "counter orders")
   deskId?: string;
   tableId?: string;
+
   agreementToken?: string;
 
   items?: Array<{
@@ -53,17 +55,11 @@ export class OrderService {
     return this.createOwnerOrder(tenantId, body);
   }
 
-  private getResourceModelName(): 'table' | 'desk' {
+  private getResourceModelName(): 'table' | 'desk' | null {
     const p = this.prismaAny();
     if (p.table) return 'table';
     if (p.desk) return 'desk';
-    throw new BadRequestException('Neither Prisma model "table" nor "desk" exists');
-  }
-
-  private getResourceId(dto: CreateOrderDtoLike): string {
-    const id = dto.deskId || dto.tableId;
-    if (!id) throw new BadRequestException('deskId (or tableId) is required');
-    return id;
+    return null;
   }
 
   private normalizeItems(dto: CreateOrderDtoLike): NormalizedItem[] {
@@ -98,29 +94,6 @@ export class OrderService {
     return candidates[0];
   }
 
-  private mustRequireCustomerInfo(menuItems: any[]): boolean {
-    return menuItems.some((mi) => (mi?.sku || '').toUpperCase() === EXTRA_HOUR_SKU);
-  }
-
-  private validateCustomerInfoIfNeeded(require: boolean, dto: CreateOrderDtoLike) {
-    if (!require) return;
-    if (typeof dto.customerName !== 'string' || dto.customerName.trim().length < 2) {
-      throw new BadRequestException('customerName is required for EXTRA_HOUR');
-    }
-    if (typeof dto.customerPhone !== 'string' || dto.customerPhone.trim().length < 6) {
-      throw new BadRequestException('customerPhone is required for EXTRA_HOUR');
-    }
-  }
-
-  private async loadResourceAndTenant(resourceId: string) {
-    const p = this.prismaAny();
-    const model = this.getResourceModelName();
-    const resource = await p[model].findFirst({ where: { id: resourceId } });
-    if (!resource) throw new NotFoundException('Desk not found');
-    if (!resource.tenantId) throw new BadRequestException(`${model} has no tenantId`);
-    return { resource, tenantId: resource.tenantId as string, model };
-  }
-
   private async loadMenuItems(tenantId: string, menuItemIds: string[]) {
     const p = this.prismaAny();
     const menuItems = await p.menuItem.findMany({ where: { id: { in: menuItemIds }, tenantId } });
@@ -136,10 +109,32 @@ export class OrderService {
       const mi = byId.get(i.menuItemId);
       if (!mi) throw new BadRequestException('Invalid item');
       const unitPrice = this.resolvePrice(mi);
-      return { menuItemId: mi.id, qty: i.qty, unitPrice, lineTotal: unitPrice * i.qty };
+      return { menuItemId: mi.id, qty: i.qty, unitPrice, lineTotal: unitPrice * i.qty, sku: mi.sku };
     });
     const total = orderItems.reduce((s, li) => s + li.lineTotal, 0);
-    return { orderItems, total };
+    const hasExtraHour = menuItems.some((mi) => (mi?.sku || '').toUpperCase() === EXTRA_HOUR_SKU);
+    return { orderItems, total, hasExtraHour };
+  }
+
+  private validateCustomerInfoIfNeeded(require: boolean, dto: CreateOrderDtoLike) {
+    if (!require) return;
+    if (typeof dto.customerName !== 'string' || dto.customerName.trim().length < 2) {
+      throw new BadRequestException('customerName is required for EXTRA_HOUR');
+    }
+    if (typeof dto.customerPhone !== 'string' || dto.customerPhone.trim().length < 6) {
+      throw new BadRequestException('customerPhone is required for EXTRA_HOUR');
+    }
+  }
+
+  private async loadResourceAndTenant(resourceId: string) {
+    const p = this.prismaAny();
+    const model = this.getResourceModelName();
+    if (!model) throw new BadRequestException('Server misconfigured: no table/desk model');
+
+    const resource = await p[model].findFirst({ where: { id: resourceId } });
+    if (!resource) throw new NotFoundException('Desk not found');
+    if (!resource.tenantId) throw new BadRequestException(`${model} has no tenantId`);
+    return { resource, tenantId: resource.tenantId as string, model };
   }
 
   private enforceAgreement(dto: CreateOrderDtoLike, expectedTenantId: string, expectedModel: 'table' | 'desk', expectedId: string) {
@@ -176,34 +171,56 @@ export class OrderService {
     });
   }
 
-  // Create (owner/staff)
+  // Create (owner/staff) — now supports deskless orders
   async createOwnerOrder(tenantId: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
 
-    const resourceId = this.getResourceId(dto);
-    const { resource, tenantId: resourceTenantId, model } = await this.loadResourceAndTenant(resourceId);
-    if (resourceTenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
+    const hasDesk = !!dto.deskId;
+    const hasTable = !!dto.tableId;
 
-    // HARD GATE
-    this.enforceAgreement(dto, tenantId, model, resource.id);
+    // If desk/table provided, enforce agreement + tenant match
+    let model: 'table' | 'desk' | null = null;
+    let resourceId: string | null = null;
+
+    if (hasDesk || hasTable) {
+      resourceId = (dto.deskId || dto.tableId)!;
+      const loaded = await this.loadResourceAndTenant(resourceId);
+      model = loaded.model;
+
+      if (loaded.tenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
+
+      // HARD GATE only when desk/table exists
+      this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
+    }
 
     const items = this.normalizeItems(dto);
     const menuItemIds = items.map((i) => i.menuItemId);
     const menuItems = await this.loadMenuItems(tenantId, menuItemIds);
 
-    const requireCustomer = this.mustRequireCustomerInfo(menuItems);
-    this.validateCustomerInfoIfNeeded(requireCustomer, dto);
+    const { orderItems, total, hasExtraHour } = this.buildOrderItems(menuItems, items);
 
-    const { orderItems, total } = this.buildOrderItems(menuItems, items);
+    // If deskless order, EXTRA_HOUR is not allowed
+    if (!resourceId && hasExtraHour) {
+      throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
+    }
+
+    // Name/phone only required if EXTRA_HOUR is in cart (desk/session order)
+    this.validateCustomerInfoIfNeeded(hasExtraHour, dto);
 
     try {
       const order = await p.order.create({
         data: {
           tenantId,
-          ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
+
+          // Only include desk/table FK if present
+          ...(model === 'table' ? { tableId: resourceId } : {}),
+          ...(model === 'desk' ? { deskId: resourceId } : {}),
+
           total,
-          customerName: requireCustomer ? dto.customerName!.trim() : null,
-          customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
+
+          customerName: hasExtraHour ? dto.customerName!.trim() : null,
+          customerPhone: hasExtraHour ? dto.customerPhone!.trim() : null,
+
           orderItems: {
             create: orderItems.map((li) => ({
               menuItemId: li.menuItemId,
