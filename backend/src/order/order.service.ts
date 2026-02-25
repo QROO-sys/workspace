@@ -17,9 +17,6 @@ type CreateOrderDtoLike = {
   customerName?: string;
   customerPhone?: string;
   notes?: string;
-
-  // optional query params used by controller list(req)
-  since?: string;
 };
 
 type NormalizedItem = { menuItemId: string; qty: number };
@@ -35,7 +32,7 @@ export class OrderService {
   // -----------------------------
   // Controller compatibility layer
   // -----------------------------
-  // Your controller calls: orders.list(req)
+  // If your controller calls orders.list(req)
   async list(req: any) {
     const tenantId = req?.user?.tenantId;
     if (!tenantId) throw new BadRequestException('tenantId missing');
@@ -45,7 +42,7 @@ export class OrderService {
     return this.listForTenant(tenantId);
   }
 
-  // Your controller calls: orders.create(req, body)
+  // If your controller calls orders.create(req, body)
   async create(req: any, body: any) {
     const tenantId = req?.user?.tenantId;
     if (!tenantId) throw new BadRequestException('tenantId missing');
@@ -83,7 +80,8 @@ export class OrderService {
     return items;
   }
 
-  private resolvePriceEgp(menuItem: any): number {
+  private resolvePrice(menuItem: any): number {
+    // Support multiple schemas (priceEgp / price / etc.)
     const candidates = [
       menuItem.priceEgp,
       menuItem.priceEGP,
@@ -93,6 +91,7 @@ export class OrderService {
       menuItem.unitPrice,
       menuItem.amountEgp,
       menuItem.amountEGP,
+      menuItem.amount,
     ].filter((v) => typeof v === 'number' && Number.isFinite(v));
     if (candidates.length === 0) {
       throw new BadRequestException(`Menu item "${menuItem?.id}" has no numeric price field`);
@@ -144,19 +143,19 @@ export class OrderService {
     const orderItems = items.map((i) => {
       const mi = byId.get(i.menuItemId);
       if (!mi) throw new BadRequestException('Invalid item');
-      const unitPriceEgp = this.resolvePriceEgp(mi);
+      const unitPrice = this.resolvePrice(mi);
       return {
         menuItemId: mi.id,
         qty: i.qty,
-        unitPriceEgp,
-        lineTotalEgp: unitPriceEgp * i.qty,
+        unitPrice,
+        lineTotal: unitPrice * i.qty,
       };
     });
-    const totalEgp = orderItems.reduce((s, li) => s + li.lineTotalEgp, 0);
-    return { orderItems, totalEgp };
+    const total = orderItems.reduce((s, li) => s + li.lineTotal, 0);
+    return { orderItems, total };
   }
 
-  // --------- API used elsewhere ----------
+  // --------- List APIs ----------
   async listForTenant(tenantId: string) {
     const p = this.prismaAny();
     return p.order.findMany({
@@ -200,6 +199,7 @@ export class OrderService {
     });
   }
 
+  // --------- Create APIs ----------
   async createGuestOrder(dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
 
@@ -213,7 +213,7 @@ export class OrderService {
     const requireCustomer = this.mustRequireCustomerInfo(menuItems);
     this.validateCustomerInfoIfNeeded(requireCustomer, dto);
 
-    const { orderItems, totalEgp } = this.buildOrderItems(menuItems, items);
+    const { orderItems, total } = this.buildOrderItems(menuItems, items);
 
     try {
       const order = await p.order.create({
@@ -221,7 +221,9 @@ export class OrderService {
           tenantId,
           ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
 
-          totalEgp,
+          // REQUIRED by your schema:
+          total,
+
           customerName: requireCustomer ? dto.customerName!.trim() : null,
           customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
           notes: typeof dto.notes === 'string' && dto.notes.trim() ? dto.notes.trim() : null,
@@ -230,8 +232,10 @@ export class OrderService {
             create: orderItems.map((li) => ({
               menuItemId: li.menuItemId,
               qty: li.qty,
-              unitPriceEgp: li.unitPriceEgp,
-              lineTotalEgp: li.lineTotalEgp,
+              // Keep both patterns; Prisma will ignore unknown fields only if you remove them.
+              // Your schema clearly accepts qty; if it also has price fields, these will help.
+              unitPrice: li.unitPrice,
+              lineTotal: li.lineTotal,
             })),
           },
         },
@@ -258,7 +262,7 @@ export class OrderService {
     const requireCustomer = this.mustRequireCustomerInfo(menuItems);
     this.validateCustomerInfoIfNeeded(requireCustomer, dto);
 
-    const { orderItems, totalEgp } = this.buildOrderItems(menuItems, items);
+    const { orderItems, total } = this.buildOrderItems(menuItems, items);
 
     try {
       const order = await p.order.create({
@@ -266,7 +270,9 @@ export class OrderService {
           tenantId,
           ...(model === 'table' ? { tableId: resource.id } : { deskId: resource.id }),
 
-          totalEgp,
+          // REQUIRED by your schema:
+          total,
+
           customerName: requireCustomer ? dto.customerName!.trim() : null,
           customerPhone: requireCustomer ? dto.customerPhone!.trim() : null,
           notes: typeof dto.notes === 'string' && dto.notes.trim() ? dto.notes.trim() : null,
@@ -275,8 +281,8 @@ export class OrderService {
             create: orderItems.map((li) => ({
               menuItemId: li.menuItemId,
               qty: li.qty,
-              unitPriceEgp: li.unitPriceEgp,
-              lineTotalEgp: li.lineTotalEgp,
+              unitPrice: li.unitPrice,
+              lineTotal: li.lineTotal,
             })),
           },
         },
