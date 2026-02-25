@@ -33,24 +33,17 @@ export class AnalyticsService {
     start.setHours(0, 0, 0, 0);
 
     const orders = await this.prisma.order.findMany({
-      where: {
-        createdAt: { gte: start, lte: now },
-        // don’t assume deleted field exists in schema; tolerate by not filtering it in Prisma
-      } as any,
-      take: 2000,
-      orderBy: { createdAt: 'desc' } as any,
+      where: { createdAt: { gte: start, lte: now } } as any,
+      take: 5000,
     });
 
-    const scoped = tenantId ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId) : orders;
+    const scoped = tenantId
+      ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId)
+      : orders;
 
     const total = scoped.reduce((acc: number, o: any) => acc + sumOrderValue(o), 0);
 
-    return {
-      ok: true,
-      range: { start: start.toISOString(), end: now.toISOString() },
-      total,
-      count: scoped.length,
-    };
+    return { ok: true, range: { start: start.toISOString(), end: now.toISOString() }, total, count: scoped.length };
   }
 
   async revenueYearly(req: any, year: number) {
@@ -63,31 +56,24 @@ export class AnalyticsService {
 
     const orders = await this.prisma.order.findMany({
       where: { createdAt: { gte: start, lt: end } } as any,
-      take: 50000,
-      orderBy: { createdAt: 'desc' } as any,
+      take: 100000,
     });
 
-    const scoped = tenantId ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId) : orders;
+    const scoped = tenantId
+      ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId)
+      : orders;
 
     const total = scoped.reduce((acc: number, o: any) => acc + sumOrderValue(o), 0);
 
-    // monthly breakdown
     const byMonth = Array.from({ length: 12 }, () => 0);
     for (const o of scoped as any[]) {
       const t = new Date(o?.createdAt).getTime();
       if (!Number.isFinite(t)) continue;
       const d = new Date(t);
-      const m = d.getUTCMonth();
-      byMonth[m] += sumOrderValue(o);
+      byMonth[d.getUTCMonth()] += sumOrderValue(o);
     }
 
-    return {
-      ok: true,
-      year,
-      total,
-      byMonth, // index 0..11
-      count: scoped.length,
-    };
+    return { ok: true, year, total, byMonth, count: scoped.length };
   }
 
   async revenueAllTime(req: any) {
@@ -96,11 +82,12 @@ export class AnalyticsService {
     const tenantId = reqTenantId(req);
 
     const orders = await this.prisma.order.findMany({
-      take: 100000,
-      orderBy: { createdAt: 'desc' } as any,
+      take: 200000,
     });
 
-    const scoped = tenantId ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId) : orders;
+    const scoped = tenantId
+      ? orders.filter((o: any) => String(o?.tenantId || o?.table?.tenantId || '') === tenantId)
+      : orders;
 
     const total = scoped.reduce((acc: number, o: any) => acc + sumOrderValue(o), 0);
 

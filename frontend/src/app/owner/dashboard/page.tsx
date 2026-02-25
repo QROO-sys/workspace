@@ -5,175 +5,279 @@ import { apiFetch } from "@/lib/api";
 
 type AnyObj = Record<string, any>;
 
+function toArr(x: any): any[] {
+  if (Array.isArray(x)) return x;
+  if (Array.isArray(x?.items)) return x.items;
+  if (Array.isArray(x?.data)) return x.data;
+  if (Array.isArray(x?.desks)) return x.desks;
+  if (Array.isArray(x?.bookings)) return x.bookings;
+  if (Array.isArray(x?.orders)) return x.orders;
+  if (Array.isArray(x?.menuItems)) return x.menuItems;
+  return [];
+}
+
 function money(n: any) {
   const v = Number(n);
-  if (!Number.isFinite(v)) return "0";
+  if (!Number.isFinite(v)) return "";
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 }
 
-function monthName(i: number) {
-  const names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  return names[i] || `M${i + 1}`;
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded border bg-white p-4">
+      <div className="font-semibold mb-3">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Table({
+  cols,
+  rows,
+  empty,
+}: {
+  cols: { k: string; label: string }[];
+  rows: AnyObj[];
+  empty: string;
+}) {
+  if (!rows.length) return <div className="text-sm text-gray-600">{empty}</div>;
+
+  return (
+    <div className="overflow-auto">
+      <table className="min-w-full text-sm">
+        <thead>
+          <tr className="text-left border-b">
+            {cols.map((c) => (
+              <th key={c.k} className="py-2 pr-4 font-medium">
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id || r._id || i} className="border-b last:border-b-0">
+              {cols.map((c) => (
+                <td key={c.k} className="py-2 pr-4 whitespace-nowrap">
+                  {String(r?.[c.k] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export default function OwnerDashboardPage() {
-  const year = useMemo(() => new Date().getFullYear(), []);
-
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [role, setRole] = useState<string>(""); // OWNER | ADMIN | EMPLOYEE
-  const [daily, setDaily] = useState<AnyObj | null>(null);
-  const [yearly, setYearly] = useState<AnyObj | null>(null);
-  const [alltime, setAlltime] = useState<AnyObj | null>(null);
-
-  async function load() {
-    setErr(null);
-    setLoading(true);
-
-    try {
-      // Determine role (best-effort)
-      // /api/auth/me should exist in your project; if not, we fall back to assuming not-owner.
-      let me: any = null;
-      try {
-        me = await fetch("/api/auth/me").then((r) => r.json());
-      } catch {
-        me = null;
-      }
-      const r = String(me?.role || me?.user?.role || "").toUpperCase();
-      setRole(r);
-
-      // Everyone (staff) gets daily
-      const dailyRes = await apiFetch("/analytics/revenue/daily", { method: "GET" });
-      setDaily(dailyRes);
-
-      // Owner-only extras
-      if (r === "OWNER") {
-        const [yearRes, allRes] = await Promise.all([
-          apiFetch(`/analytics/revenue/yearly?year=${encodeURIComponent(String(year))}`, { method: "GET" }),
-          apiFetch("/analytics/revenue/alltime", { method: "GET" }),
-        ]);
-        setYearly(yearRes);
-        setAlltime(allRes);
-      } else {
-        setYearly(null);
-        setAlltime(null);
-      }
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load dashboard");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [desks, setDesks] = useState<AnyObj[]>([]);
+  const [menuItems, setMenuItems] = useState<AnyObj[]>([]);
+  const [bookings, setBookings] = useState<AnyObj[]>([]);
+  const [orders, setOrders] = useState<AnyObj[]>([]);
+  const [revenueDaily, setRevenueDaily] = useState<AnyObj[]>([]);
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let alive = true;
+
+    (async () => {
+      try {
+        setErr(null);
+        setLoading(true);
+
+        // These match your Nest controllers:
+        const [desksRes, menuRes, bookingsRes, ordersRes] = await Promise.all([
+          apiFetch("/desks", { method: "GET" }),
+          apiFetch("/menu-items", { method: "GET" }),
+          apiFetch("/bookings", { method: "GET" }),
+          apiFetch("/orders", { method: "GET" }),
+        ]);
+
+        let revenueRes: any = null;
+        try {
+          revenueRes = await apiFetch("/analytics/revenue/daily", { method: "GET" });
+        } catch {
+          revenueRes = null;
+        }
+
+        if (!alive) return;
+
+        const desksArr = toArr(desksRes);
+        const menuArr = toArr(menuRes);
+        const bookingsArr = toArr(bookingsRes);
+        const ordersArr = toArr(ordersRes);
+        const revenueArr = toArr(revenueRes);
+
+        // Normalize desk fields you care about
+        const normDesks = desksArr.map((d: any, i: number) => {
+          const id = String(d?.id ?? d?._id ?? "");
+          const name = String(d?.name ?? `Desk ${i + 1}`);
+          const qrUrl =
+            typeof d?.qrUrl === "string" && d.qrUrl
+              ? d.qrUrl
+              : `${window.location.origin}/d/${id}`;
+          const laptopSerial = String(d?.laptopSerial ?? d?.serial ?? "");
+          const hourlyRate = d?.hourlyRate ?? d?.rate ?? "";
+          return { ...d, id, name, qrUrl, laptopSerial, hourlyRate };
+        });
+
+        setDesks(normDesks);
+
+        // Normalize menu items (SKU + price)
+        const normMenu = menuArr.map((m: any) => ({
+          ...m,
+          sku: String(m?.sku ?? m?.SKU ?? ""),
+          name: String(m?.name ?? m?.title ?? ""),
+          price: m?.price ?? m?.amount ?? "",
+          category: String(m?.category?.name ?? m?.categoryName ?? ""),
+        }));
+        setMenuItems(normMenu);
+
+        // Normalize bookings
+        const normBookings = bookingsArr.map((b: any) => ({
+          ...b,
+          desk: String(b?.table?.name ?? b?.desk?.name ?? b?.deskId ?? b?.tableId ?? ""),
+          start: String(b?.startAt ?? b?.startTime ?? b?.start ?? b?.from ?? ""),
+          end: String(b?.endAt ?? b?.endTime ?? b?.end ?? b?.to ?? ""),
+          status: String(b?.status ?? ""),
+          customer: String(b?.customerName ?? b?.customer ?? b?.userEmail ?? ""),
+        }));
+        setBookings(normBookings);
+
+        // Normalize orders (revenue-ish)
+        const normOrders = ordersArr.map((o: any) => ({
+          ...o,
+          desk: String(o?.table?.name ?? o?.desk?.name ?? o?.tableId ?? o?.deskId ?? ""),
+          total: o?.total ?? o?.amount ?? o?.sum ?? "",
+          created: String(o?.createdAt ?? o?.created ?? ""),
+        }));
+        setOrders(normOrders);
+
+        // Revenue daily
+        setRevenueDaily(revenueArr);
+      } catch (e: any) {
+        if (!alive) return;
+        setErr(e?.message || "Failed to load dashboard");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const byMonth = useMemo(() => {
-    const arr = Array.isArray(yearly?.byMonth) ? yearly.byMonth : null;
-    if (!arr || arr.length !== 12) return null;
-    return arr.map((v: any, idx: number) => ({ m: monthName(idx), v: Number(v) || 0 }));
-  }, [yearly]);
+  const kpis = useMemo(() => {
+    const totalOrders = orders.length;
+    const totalBookings = bookings.length;
+    const totalDesks = desks.length;
 
-  if (loading) return <div className="text-sm text-gray-600">Loading dashboard…</div>;
+    const orderSum = orders.reduce((acc, o) => {
+      const v = Number(o?.total);
+      return Number.isFinite(v) ? acc + v : acc;
+    }, 0);
+
+    return { totalOrders, totalBookings, totalDesks, orderSum };
+  }, [orders, bookings, desks]);
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600">
+        Loading owner dashboard…
+      </div>
+    );
+  }
+
+  if (err) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="max-w-xl w-full rounded border bg-white p-4">
+          <div className="font-semibold mb-2">Dashboard error</div>
+          <div className="text-sm text-red-700 break-words">{err}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-2xl font-bold">Dashboard</div>
-          <div className="text-sm text-gray-600">
-            Role: <b>{role || "Unknown"}</b>
-          </div>
-        </div>
-
-        <button
-          className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={load}
-          type="button"
-        >
-          Refresh
-        </button>
-      </div>
-
-      {err && (
-        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">
-          {err}
-        </div>
-      )}
-
-      {/* Revenue cards */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded border bg-white p-4">
-          <div className="text-xs text-gray-500">Daily revenue</div>
-          <div className="text-2xl font-bold mt-1">{money(daily?.total)} EGP</div>
-          <div className="text-xs text-gray-500 mt-1">
-            Orders: {Number(daily?.count || 0)}
-          </div>
-        </div>
-
-        <div className="rounded border bg-white p-4">
-          <div className="text-xs text-gray-500">Annual revenue ({year})</div>
-          {role === "OWNER" ? (
-            <>
-              <div className="text-2xl font-bold mt-1">{money(yearly?.total)} EGP</div>
-              <div className="text-xs text-gray-500 mt-1">
-                Orders: {Number(yearly?.count || 0)}
-              </div>
-            </>
-          ) : (
-            <div className="text-sm text-gray-600 mt-2">Owner only</div>
-          )}
-        </div>
-
-        <div className="rounded border bg-white p-4">
-          <div className="text-xs text-gray-500">All-time revenue</div>
-          {role === "OWNER" ? (
-            <>
-              <div className="text-2xl font-bold mt-1">{money(alltime?.total)} EGP</div>
-              <div className="text-xs text-gray-500 mt-1">
-                Orders: {Number(alltime?.count || 0)}
-              </div>
-            </>
-          ) : (
-            <div className="text-sm text-gray-600 mt-2">Owner only</div>
-          )}
+      <div>
+        <div className="text-2xl font-bold">Dashboard</div>
+        <div className="text-sm text-gray-600">
+          Desks: {kpis.totalDesks} • Bookings: {kpis.totalBookings} • Orders: {kpis.totalOrders} • Revenue (orders): {money(kpis.orderSum)}
         </div>
       </div>
 
-      {/* Monthly breakdown (Owner only) */}
-      <div className="rounded border bg-white p-4">
-        <div className="font-semibold">Monthly breakdown ({year})</div>
-        {role !== "OWNER" ? (
-          <div className="text-sm text-gray-600 mt-2">Owner only</div>
-        ) : !byMonth ? (
-          <div className="text-sm text-gray-600 mt-2">No yearly breakdown available.</div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Section title="Desk List">
+          <Table
+            empty="No desks."
+            cols={[
+              { k: "name", label: "Desk" },
+              { k: "laptopSerial", label: "Laptop Serial" },
+              { k: "hourlyRate", label: "Rate" },
+              { k: "qrUrl", label: "QR URL" },
+            ]}
+            rows={desks}
+          />
+        </Section>
+
+        <Section title="Menu Items & SKUs">
+          <Table
+            empty="No menu items."
+            cols={[
+              { k: "sku", label: "SKU" },
+              { k: "name", label: "Item" },
+              { k: "price", label: "Price" },
+              { k: "category", label: "Category" },
+            ]}
+            rows={menuItems}
+          />
+        </Section>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Section title="Bookings">
+          <Table
+            empty="No bookings."
+            cols={[
+              { k: "desk", label: "Desk" },
+              { k: "customer", label: "Customer" },
+              { k: "start", label: "Start" },
+              { k: "end", label: "End" },
+              { k: "status", label: "Status" },
+            ]}
+            rows={bookings.slice(0, 30)}
+          />
+        </Section>
+
+        <Section title="Orders">
+          <Table
+            empty="No orders."
+            cols={[
+              { k: "desk", label: "Desk" },
+              { k: "total", label: "Total" },
+              { k: "created", label: "Created" },
+            ]}
+            rows={orders.slice(0, 30)}
+          />
+        </Section>
+      </div>
+
+      <Section title="Revenue Daily (analytics/revenue/daily)">
+        {revenueDaily.length ? (
+          <pre className="text-xs bg-white border rounded p-3 overflow-auto">
+            {JSON.stringify(revenueDaily, null, 2)}
+          </pre>
         ) : (
-          <div className="mt-3 overflow-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="py-2 pr-4">Month</th>
-                  <th className="py-2 pr-4">Revenue (EGP)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byMonth.map((m) => (
-                  <tr key={m.m} className="border-b last:border-b-0">
-                    <td className="py-2 pr-4">{m.m}</td>
-                    <td className="py-2 pr-4">{money(m.v)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="text-xs text-gray-500 mt-2">
-              Tip: This is computed from orders. Gateway settlement reports can be added later.
-            </div>
-          </div>
+          <div className="text-sm text-gray-600">No daily revenue payload available.</div>
         )}
-      </div>
+      </Section>
     </div>
   );
 }

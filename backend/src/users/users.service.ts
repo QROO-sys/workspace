@@ -23,19 +23,16 @@ export class UsersService {
 
     const tenantId = reqTenantId(req);
 
-    // If tenantId exists on token, scope to tenant. Otherwise return latest 100.
     const where = tenantId ? ({ tenantId } as any) : ({} as any);
 
     const users = await this.prisma.user.findMany({
       where,
-      orderBy: { createdAt: 'desc' } as any,
       take: 200,
       select: {
         id: true,
         email: true,
         role: true,
         tenantId: true,
-        createdAt: true,
       } as any,
     });
 
@@ -54,7 +51,6 @@ export class UsersService {
 
     if (!existing) throw new NotFoundException('User not found');
 
-    // Safety: prevent removing OWNER from yourself accidentally unless you really mean it.
     const me = reqUserId(req);
     if (me && me === id && role !== 'OWNER') {
       throw new ForbiddenException('You cannot change your own role away from OWNER');
