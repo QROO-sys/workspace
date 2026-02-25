@@ -235,10 +235,21 @@ async function saveDesk(id: string) {
               <button
                 className="underline"
                 type="button"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(d.qrUrl || `${window.location.origin}/d/${d.id}`);
-                  alert("Link copied");
-                }}
+onClick={async () => {
+  const text = d.qrUrl || `${window.location.origin}/d/${d.id}`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.warn("Clipboard copy blocked:", err);
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  alert("Link copied");
+}}
               >
                 Copy link
               </button>
