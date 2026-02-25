@@ -6,8 +6,13 @@ const EXTRA_HOUR_SKU = 'EXTRA_HOUR';
 const POLICY_VERSION = 'v0.1';
 
 type CreateOrderDtoLike = {
+  // optional linkage
   deskId?: string;
   tableId?: string;
+
+  // NEW: force deskless “counter order”
+  counterOrder?: boolean;
+
   agreementToken?: string;
 
   items?: Array<{
@@ -165,7 +170,6 @@ export class OrderService {
     if (payload.resourceId !== expectedId) throw new BadRequestException('Agreement desk mismatch');
   }
 
-  // List APIs
   async listForTenant(tenantId: string) {
     const p = this.prismaAny();
     return p.order.findMany({
@@ -188,15 +192,17 @@ export class OrderService {
   }
 
   /**
-   * Owner/staff create order
-   * - Allows deskless orders (counter orders): omit deskId/tableId
-   * - Requires agreement only for non-staff AND only when desk/table is present
+   * Staff/Owner create order
+   * - If counterOrder=true: ignore desk/table even if provided.
+   * - Agreement is only required for non-staff AND only when desk/table is involved.
    */
   async createOwnerOrder(tenantId: string, role: string, dto: CreateOrderDtoLike) {
     const p = this.prismaAny();
     const staff = this.isStaffRole(role);
 
-    const hasDeskOrTable = !!dto.deskId || !!dto.tableId;
+    const forceCounter = dto.counterOrder === true;
+
+    const hasDeskOrTable = !forceCounter && (!!dto.deskId || !!dto.tableId);
 
     let model: 'table' | 'desk' | null = null;
     let resourceId: string | null = null;
@@ -208,9 +214,8 @@ export class OrderService {
       model = loaded.model;
       if (loaded.tenantId !== tenantId) throw new BadRequestException('Desk tenant mismatch');
 
-      if (!staff) {
-        this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
-      }
+      // only non-staff need agreement
+      if (!staff) this.enforceAgreement(dto, tenantId, model, loaded.resource.id);
 
       resourceId = loaded.resource.id;
     }
@@ -221,7 +226,7 @@ export class OrderService {
 
     const { lines, total, hasExtraHour } = this.buildLines(menuItems, items);
 
-    // Deskless orders must not include EXTRA_HOUR
+    // Counter orders cannot include EXTRA_HOUR
     if (!resourceId && hasExtraHour) {
       throw new BadRequestException('EXTRA_HOUR requires a desk/table session');
     }
@@ -234,18 +239,14 @@ export class OrderService {
           tenantId,
           ...(model === 'table' ? { tableId: resourceId } : {}),
           ...(model === 'desk' ? { deskId: resourceId } : {}),
-
           total,
-
           customerName: hasExtraHour ? dto.customerName!.trim() : null,
           customerPhone: hasExtraHour ? dto.customerPhone!.trim() : null,
-
           orderItems: {
             create: lines.map((li) => ({
               menuItemId: li.menuItemId,
-              // Your schema requires price, and DOES NOT accept qty:
-              price: li.unitPrice,
-              quantity: li.quantity,
+              price: li.unitPrice,      // REQUIRED by your schema
+              quantity: li.quantity,    // Your schema uses quantity (not qty)
             })),
           },
         },
