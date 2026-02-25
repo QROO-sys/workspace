@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 
 type Role = "OWNER" | "ADMIN" | "EMPLOYEE" | "RENTER";
+
+function labelRole(r: Role) {
+  if (r === "RENTER") return "Customer";
+  if (r === "EMPLOYEE") return "Employee";
+  if (r === "ADMIN") return "Admin";
+  return "Owner";
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,13 +39,16 @@ export default function LoginPage() {
 
       const token = res?.access_token || res?.accessToken || res?.token;
       if (!token) throw new Error("Login succeeded but no token returned");
-
       localStorage.setItem("access_token", token);
 
-      // Ask server who we are (role-based redirect)
-      const me = await fetch("/api/auth/me").then(r => r.json()).catch(() => null);
+      // Role-based routing (best effort)
+      let me: any = null;
+      try {
+        me = await fetch("/api/auth/me").then((r) => r.json());
+      } catch {
+        me = null;
+      }
       const serverRole = String(me?.role || me?.user?.role || "").toUpperCase();
-
       const finalRole = (serverRole || role).toUpperCase();
 
       if (finalRole === "OWNER" || finalRole === "ADMIN" || finalRole === "EMPLOYEE") {
@@ -68,10 +78,10 @@ export default function LoginPage() {
             value={role}
             onChange={(e) => setRole(e.target.value as Role)}
           >
-            <option value="OWNER">Owner</option>
-            <option value="ADMIN">Admin</option>
-            <option value="EMPLOYEE">Employee</option>
-            <option value="RENTER">Renter/User</option>
+            <option value="OWNER">{labelRole("OWNER")}</option>
+            <option value="ADMIN">{labelRole("ADMIN")}</option>
+            <option value="EMPLOYEE">{labelRole("EMPLOYEE")}</option>
+            <option value="RENTER">{labelRole("RENTER")}</option>
           </select>
         </label>
 
@@ -109,18 +119,10 @@ export default function LoginPage() {
           </div>
         )}
 
-        <button
-          className="w-full rounded bg-gray-900 py-2 text-white disabled:opacity-60"
-          disabled={loading}
-          type="submit"
-        >
+        <button className="w-full rounded bg-gray-900 py-2 text-white disabled:opacity-60" disabled={loading} type="submit">
           {loading ? "Signing in…" : "Sign in"}
         </button>
       </form>
-
-      <div className="text-xs text-gray-500">
-        Renter accounts will be enabled in the user management panel once created.
-      </div>
     </div>
   );
 }
