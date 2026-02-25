@@ -5,9 +5,11 @@ import { useParams } from "next/navigation";
 import QRCode from "react-qr-code";
 import { apiFetch } from "@/lib/api";
 
-type Desk = { id: string; name: string; laptopSerial?: string; qrUrl?: string };
 type MenuItem = { id: string; name: string; sku: string; price: number };
-type SessionStartResponse = { ok: boolean; sessionId: string; deskId: string; deskName: string; startAt: string; endAt: string };
+
+function normSku(s: string) {
+  return String(s || "").toUpperCase();
+}
 
 export default function DeskGuestPage() {
   const params = useParams<{ deskId: string }>();
@@ -17,20 +19,16 @@ export default function DeskGuestPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [desk, setDesk] = useState<Desk | null>(null);
+  const [deskName, setDeskName] = useState<string>("Desk");
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-
-  const [policyAccepted, setPolicyAccepted] = useState(false);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-
-  const [session, setSession] = useState<SessionStartResponse | null>(null);
-  const [starting, setStarting] = useState(false);
-
   const [cart, setCart] = useState<Record<string, number>>({});
-  const [placing, setPlacing] = useState(false);
   const [note, setNote] = useState("");
 
+  // only needed if EXTRA_HOUR is ordered
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+
+  const [busy, setBusy] = useState(false);
   const handledAddRef = useRef<string>("");
 
   async function load() {
@@ -38,17 +36,9 @@ export default function DeskGuestPage() {
     setLoading(true);
     try {
       const res = await apiFetch(`/public?deskId=${encodeURIComponent(deskId)}`, { method: "GET" });
+      setDeskName(String(res?.desk?.name || "Desk"));
 
-      const d = res?.desk;
       const mi = Array.isArray(res?.menuItems) ? res.menuItems : [];
-
-      setDesk({
-        id: String(d?.id || deskId),
-        name: String(d?.name || `Desk ${deskId}`),
-        laptopSerial: String(d?.laptopSerial || d?.serial || ""),
-        qrUrl: String(d?.qrUrl || ""),
-      });
-
       setMenuItems(
         mi.map((x: any) => ({
           id: String(x?.id),
@@ -85,32 +75,10 @@ export default function DeskGuestPage() {
     setCart((c) => ({ ...c, [add]: (c[add] || 0) + 1 }));
   }, [menuItems]);
 
-  async function startSession() {
-    setErr(null);
-
-    if (!policyAccepted) return setErr("You must accept the laptop usage policy to start.");
-    if (!name.trim() || !phone.trim()) return setErr("Name and phone are required to start.");
-
-    setStarting(true);
-    try {
-      const res = (await apiFetch("/public/sessions/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deskId, name: name.trim(), phone: phone.trim(), policyAccepted: true }),
-      })) as SessionStartResponse;
-
-      setSession(res);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to start session");
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  function addToCart(id: string) {
+  function addItem(id: string) {
     setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
   }
-  function removeFromCart(id: string) {
+  function removeItem(id: string) {
     setCart((c) => {
       const next = { ...c };
       const q = (next[id] || 0) - 1;
@@ -126,107 +94,83 @@ export default function DeskGuestPage() {
       .map(([id, qty]) => {
         const item = byId.get(id);
         if (!item) return null;
-        return { id, qty, item, lineTotal: item.price * qty };
+        return { id, qty, item, total: item.price * qty };
       })
-      .filter(Boolean) as Array<{ id: string; qty: number; item: MenuItem; lineTotal: number }>;
+      .filter(Boolean) as Array<{ id: string; qty: number; item: MenuItem; total: number }>;
   }, [cart, menuItems]);
 
-  const cartTotal = useMemo(() => cartLines.reduce((a, l) => a + l.lineTotal, 0), [cartLines]);
-
   const hasExtraHour = useMemo(
-    () => cartLines.some((l) => String(l.item.sku || "").toUpperCase() === "EXTRA_HOUR"),
+    () => cartLines.some((l) => normSku(l.item.sku) === "EXTRA_HOUR"),
     [cartLines]
   );
 
+  const total = useMemo(() => cartLines.reduce((a, l) => a + l.total, 0), [cartLines]);
+
   async function placeOrder() {
     setErr(null);
-
-    if (!session?.sessionId) return setErr("Start your desk session before ordering.");
     if (!cartLines.length) return setErr("Cart is empty.");
 
-    // On desk flow, name/phone are already collected for session start.
-    // But keep a safety check if EXTRA_HOUR is included:
-    if (hasExtraHour && (!name.trim() || !phone.trim())) {
-      return setErr("Name and phone are required for Extend time.");
+    if (hasExtraHour) {
+      if (!customerName.trim() || !customerPhone.trim()) {
+        return setErr("Customer name and phone are required for Extend time.");
+      }
     }
 
-    setPlacing(true);
+    setBusy(true);
     try {
-      await apiFetch("/orders", {
+      await apiFetch("/public/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableId: deskId,
-          sessionId: session.sessionId,
           notes: note || "",
           paymentMethod: "CASH",
           paymentStatus: "PENDING",
-          customerName: hasExtraHour ? name.trim() : undefined,
-          customerPhone: hasExtraHour ? phone.trim() : undefined,
+          customerName: hasExtraHour ? customerName.trim() : undefined,
+          customerPhone: hasExtraHour ? customerPhone.trim() : undefined,
           items: cartLines.map((l) => ({ menuItemId: l.item.id, quantity: l.qty })),
         }),
       });
 
       setCart({});
       setNote("");
-      alert("Order sent to receptionist (pending payment).");
+      setCustomerName("");
+      setCustomerPhone("");
+      alert("Order sent to receptionist (cash pending).");
     } catch (e: any) {
-      setErr(e?.message || "Failed to place order");
+      setErr(e?.message || "Order failed");
     } finally {
-      setPlacing(false);
+      setBusy(false);
     }
   }
 
   if (loading) return <div className="p-6 text-sm text-gray-600">Loading desk…</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 space-y-6">
-      {err && (
-        <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{err}</div>
-      )}
+    <div className="min-h-screen bg-gray-50 p-6 space-y-4">
+      {err && <div className="rounded border bg-red-50 p-3 text-sm text-red-800 border-red-200">{err}</div>}
 
       <div className="rounded border bg-white p-4">
-        <div className="text-2xl font-bold">{desk?.name || "Desk"}</div>
-        <div className="text-sm text-gray-600">
-          Desk ID: {deskId}
-          {desk?.laptopSerial ? ` • Laptop: ${desk.laptopSerial}` : ""}
-        </div>
+        <div className="text-2xl font-bold">{deskName}</div>
+        <div className="text-sm text-gray-600">Desk ID: {deskId}</div>
       </div>
 
-      {!session && (
-        <div className="rounded border bg-white p-4 space-y-3">
-          <div className="font-semibold">Start your session</div>
-
+      {hasExtraHour && (
+        <div className="rounded border bg-white p-4 grid gap-3 md:grid-cols-2">
           <label className="block text-sm">
-            Name
-            <input className="mt-1 w-full rounded border p-2" value={name} onChange={(e) => setName(e.target.value)} />
+            Customer name (required for Extend time)
+            <input className="mt-1 w-full rounded border p-2" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
           </label>
-
           <label className="block text-sm">
-            Phone
-            <input className="mt-1 w-full rounded border p-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            Customer phone (required for Extend time)
+            <input className="mt-1 w-full rounded border p-2" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
           </label>
-
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={policyAccepted} onChange={(e) => setPolicyAccepted(e.target.checked)} />
-            <span>I agree to the laptop usage policy.</span>
-          </label>
-
-          <button
-            className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60"
-            disabled={starting}
-            onClick={startSession}
-            type="button"
-          >
-            {starting ? "Starting…" : "Start Session"}
-          </button>
         </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded border bg-white p-4">
           <div className="font-semibold mb-3">Menu</div>
-
           <div className="space-y-3">
             {menuItems.map((m) => {
               const itemQr = `${origin}/d/${encodeURIComponent(deskId)}?add=${encodeURIComponent(m.id)}`;
@@ -237,12 +181,7 @@ export default function DeskGuestPage() {
                       <div className="text-sm font-medium">{m.name}</div>
                       <div className="text-xs text-gray-500">SKU: {m.sku}</div>
                       <div className="text-sm mt-1">{m.price} EGP</div>
-
-                      <button
-                        className="mt-2 rounded border px-2 py-1 text-sm hover:bg-gray-50"
-                        onClick={() => addToCart(m.id)}
-                        type="button"
-                      >
+                      <button className="mt-2 rounded border px-2 py-1 text-sm hover:bg-gray-50" onClick={() => addItem(m.id)} type="button">
                         Add
                       </button>
                     </div>
@@ -257,7 +196,6 @@ export default function DeskGuestPage() {
                 </div>
               );
             })}
-
             {!menuItems.length && <div className="text-sm text-gray-600">No menu items found.</div>}
           </div>
         </div>
@@ -273,17 +211,13 @@ export default function DeskGuestPage() {
                     {l.item.name} × {l.qty}
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="text-sm">{l.lineTotal} EGP</div>
-                    <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" onClick={() => removeFromCart(l.id)} type="button">
-                      -
-                    </button>
-                    <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" onClick={() => addToCart(l.id)} type="button">
-                      +
-                    </button>
+                    <div className="text-sm">{l.total} EGP</div>
+                    <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" onClick={() => removeItem(l.id)} type="button">-</button>
+                    <button className="rounded border px-2 py-1 text-sm hover:bg-gray-50" onClick={() => addItem(l.id)} type="button">+</button>
                   </div>
                 </div>
               ))}
-              <div className="border-t pt-2 text-sm font-semibold">Total: {cartTotal} EGP</div>
+              <div className="border-t pt-2 text-sm font-semibold">Total: {total} EGP</div>
             </div>
           ) : (
             <div className="text-sm text-gray-600">Cart is empty.</div>
@@ -294,13 +228,8 @@ export default function DeskGuestPage() {
             <input className="mt-1 w-full rounded border p-2" value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
 
-          <button
-            className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60"
-            disabled={placing}
-            onClick={placeOrder}
-            type="button"
-          >
-            {placing ? "Sending…" : "Place Order (Cash Pending)"}
+          <button className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-60" disabled={busy} onClick={placeOrder} type="button">
+            {busy ? "Sending…" : "Place Order (Cash Pending)"}
           </button>
         </div>
       </div>
