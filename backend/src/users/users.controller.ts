@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Req, UseGuards, ForbiddenException
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UsersService } from './users.service';
 
-const ALLOWED_ROLES = new Set(['OWNER', 'ADMIN', 'EMPLOYEE', 'RENTER']);
+const ALLOWED = new Set(['OWNER', 'ADMIN', 'EMPLOYEE', 'RENTER', 'CUSTOMER']);
 
 function reqRole(req: any): string {
   return String(req?.user?.role || '').toUpperCase();
@@ -21,7 +21,6 @@ function assertOwnerOrAdmin(req: any) {
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
-  // Owner/Admin can list users
   @UseGuards(JwtAuthGuard)
   @Get()
   async list(@Req() req: any) {
@@ -29,16 +28,18 @@ export class UsersController {
     return this.users.listUsers(req);
   }
 
-  // Owner can change roles
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
   async update(@Req() req: any, @Param('id') id: string, @Body() dto: any) {
     assertOwner(req);
 
-    const role = String(dto?.role || '').toUpperCase();
-    if (!ALLOWED_ROLES.has(role)) {
-      throw new BadRequestException(`Invalid role. Allowed: ${Array.from(ALLOWED_ROLES).join(', ')}`);
+    let role = String(dto?.role || '').toUpperCase();
+    if (!ALLOWED.has(role)) {
+      throw new BadRequestException(`Invalid role. Allowed: OWNER, ADMIN, EMPLOYEE, CUSTOMER`);
     }
+
+    // Store CUSTOMER as RENTER to avoid Prisma enum changes
+    if (role === 'CUSTOMER') role = 'RENTER';
 
     return this.users.updateUserRole(req, id, role);
   }
