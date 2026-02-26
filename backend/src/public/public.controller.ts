@@ -11,7 +11,6 @@ export class PublicController {
 
   private async findDeskOrTable(id: string) {
     const p = this.p();
-    // your current schema uses table for desks
     if (p.table) {
       const table = await p.table.findFirst({ where: { id } });
       return { kind: 'table' as const, record: table };
@@ -23,10 +22,8 @@ export class PublicController {
     throw new BadRequestException('Server misconfigured: no table/desk model');
   }
 
-  private async loadMenuItemsForTenant(tenantId: string) {
+  private async loadMenuItemsForTenant(tenantId: string): Promise<any[]> {
     const p = this.p();
-
-    // prefer scalar tenantId if it exists; fallback to tenant relation
     const items = await p.menuItem
       .findMany({
         where: { tenantId, deleted: false },
@@ -39,7 +36,7 @@ export class PublicController {
         });
       });
 
-    return items as any[];
+    return (items || []) as any[];
   }
 
   private priceFromMenuItem(m: any): number {
@@ -70,39 +67,37 @@ export class PublicController {
 
     const menuItems = await this.loadMenuItemsForTenant(tenantId);
 
-    // Keep response shape friendly to frontend
     return { ok: true, desk: record, menuItems };
   }
 
-  // GET /public/orders/:orderId   (used by /checkout?orderId=...)
+  // GET /public/orders/:orderId
   @Get('orders/:orderId')
   async getOrder(@Param('orderId') orderId: string) {
     const p = this.p();
     const id = String(orderId || '').trim();
     if (!id) throw new BadRequestException('orderId is required');
 
-    // include orderItems and menuItem if possible
-    const order = await p.order.findFirst({
-      where: { id },
-      include: {
-        orderItems: { include: { menuItem: true } },
-        table: true,
-        desk: true,
-      },
-    }).catch(async () => {
-      // fallback if relations differ
-      return p.order.findFirst({
+    const order = await p.order
+      .findFirst({
         where: { id },
-        include: { orderItems: true },
+        include: {
+          orderItems: { include: { menuItem: true } },
+          table: true,
+          desk: true,
+        },
+      })
+      .catch(async () => {
+        return p.order.findFirst({
+          where: { id },
+          include: { orderItems: true },
+        });
       });
-    });
 
     if (!order) throw new BadRequestException('Order not found');
-
     return { ok: true, order };
   }
 
-  // POST /public/orders  (guest desk-user orders)
+  // POST /public/orders (guest desk-user orders)
   @Post('orders')
   async createOrder(@Body() dto: any) {
     const p = this.p();
@@ -119,22 +114,22 @@ export class PublicController {
     const tenantId = String((record as any).tenantId || '');
     if (!tenantId) throw new BadRequestException('Desk missing tenantId');
 
-    // Load menu items for pricing
     const ids = items.map((x: any) => String(x?.menuItemId || '')).filter(Boolean);
     if (!ids.length) throw new BadRequestException('menuItemId is required in items');
 
-    const menu = await p.menuItem
+    const menu: any[] = await p.menuItem
       .findMany({ where: { tenantId, id: { in: ids }, deleted: false } })
       .catch(async () => {
         return p.menuItem.findMany({ where: { tenant: { id: tenantId }, id: { in: ids }, deleted: false } });
       });
 
-    const byId = new Map((menu || []).map((m: any) => [String(m.id), m]));
+    const byId: Map<string, any> = new Map(menu.map((mm: any) => [String(mm.id), mm]));
+
     for (const it of items) {
       if (!byId.get(String(it.menuItemId))) throw new BadRequestException('Invalid menuItemId in items');
     }
 
-    const hasExtraHour = (menu || []).some((m: any) => String(m.sku || '').toUpperCase() === 'EXTRA_HOUR');
+    const hasExtraHour = menu.some((mm: any) => String(mm.sku || '').toUpperCase() === 'EXTRA_HOUR');
 
     const customerName = dto?.customerName == null ? undefined : String(dto.customerName);
     const customerPhone = dto?.customerPhone == null ? undefined : String(dto.customerPhone);
@@ -145,14 +140,15 @@ export class PublicController {
       }
     }
 
-    // Compute total + orderItems
     let total = 0;
     const orderItemsData: any[] = [];
+
     for (const it of items) {
-      const m = byId.get(String(it.menuItemId));
+      const m: any = byId.get(String(it.menuItemId)); // <-- now typed any
       const quantity = Math.max(1, Math.floor(Number(it.quantity ?? it.qty ?? 1)));
       const price = this.priceFromMenuItem(m);
       total += price * quantity;
+
       orderItemsData.push({
         menuItemId: String(m.id),
         quantity,
@@ -160,11 +156,10 @@ export class PublicController {
       });
     }
 
-    // Create order (schema-tolerant tenant linkage)
     const created = await p.order
       .create({
         data: {
-          tableId, // ok even if your model calls it tableId
+          tableId,
           tenantId,
           customerName: hasExtraHour ? customerName!.trim() : null,
           customerPhone: hasExtraHour ? customerPhone!.trim() : null,
@@ -174,7 +169,6 @@ export class PublicController {
         include: { orderItems: true },
       })
       .catch(async () => {
-        // fallback: tenant is a relation
         return p.order.create({
           data: {
             tableId,
@@ -191,11 +185,7 @@ export class PublicController {
     return { ok: true, order: created };
   }
 
-  /**
-   * POST /public/orders/service
-   * Body: { tenantId, serviceSku, quantity }
-   * Creates a deskless counter order by SKU (e.g. PRINT).
-   */
+  // POST /public/orders/service  (deskless service order by SKU, e.g. PRINT)
   @Post('orders/service')
   async createServiceOrder(@Body() dto: any) {
     const p = this.p();
@@ -207,7 +197,7 @@ export class PublicController {
     if (!tenantId) throw new BadRequestException('tenantId is required');
     if (!serviceSku) throw new BadRequestException('serviceSku is required');
 
-    const menuItem = await p.menuItem
+    const menuItem: any = await p.menuItem
       .findFirst({ where: { tenantId, sku: serviceSku, deleted: false } })
       .catch(async () => {
         return p.menuItem.findFirst({ where: { tenant: { id: tenantId }, sku: serviceSku, deleted: false } });
