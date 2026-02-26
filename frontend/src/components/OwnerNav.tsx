@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { normalizeLang, t, type Lang } from "@/lib/i18n";
 
 export default function OwnerNav({ role }: { role?: string }) {
@@ -29,6 +29,16 @@ export default function OwnerNav({ role }: { role?: string }) {
   const canManage = role === "OWNER" || role === "MANAGER";
   const canSeeAnalytics = role === "OWNER" || role === "MANAGER" || role === "STAFF";
   const isOwner = role === "OWNER";
+
+  // Visible deploy stamp (proves which deployment you're actually seeing)
+  const stamp = useMemo(() => {
+    const sha =
+      process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ||
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.NEXT_PUBLIC_GIT_SHA ||
+      "";
+    return sha ? sha.slice(0, 7) : "no-sha";
+  }, []);
 
   return (
     <nav className="mb-4 flex flex-wrap items-center gap-4">
@@ -74,7 +84,9 @@ export default function OwnerNav({ role }: { role?: string }) {
         </Link>
       ) : null}
 
-      <button onClick={logout} className="ml-auto rounded border px-3 py-1 hover:bg-gray-50">
+      <span className="ml-auto text-xs text-gray-500">UI {stamp}</span>
+
+      <button onClick={logout} className="rounded border px-3 py-1 hover:bg-gray-50">
         {t(lang, "logout")}
       </button>
     </nav>
