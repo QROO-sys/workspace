@@ -1,35 +1,72 @@
-const base =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:3001" : "");
+export type ApiFetchOptions = RequestInit & { body?: any };
 
-if (!base) throw new Error("NEXT_PUBLIC_API_URL is not set");
+function getApiBase(): string {
+  // Never crash the build if env is missing.
+  // Production default for your platform:
+  const prodDefault = "https://api.qr-oo.com";
 
-export async function apiFetch(path: string, init: RequestInit = {}) {
-  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const fromEnv =
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "";
 
-  const headers = new Headers(init.headers || {});
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("access_token");
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (fromEnv) return fromEnv;
+
+  if (process.env.NODE_ENV === "development") return "http://localhost:3001";
+
+  return prodDefault;
+}
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return (
+    window.localStorage.getItem("access_token") ||
+    window.localStorage.getItem("token") ||
+    window.localStorage.getItem("jwt")
+  );
+}
+
+export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
+  const base = getApiBase();
+  const url = path.startsWith("http") ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const headers = new Headers(options.headers || {});
+  if (!headers.has("Content-Type") && options.body != null) {
+    headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(url, { ...init, headers });
+  const token = getToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const body =
+    options.body != null && typeof options.body !== "string"
+      ? JSON.stringify(options.body)
+      : options.body;
+
+  const res = await fetch(url, {
+    ...options,
+    headers,
+    body,
+  });
 
   const text = await res.text();
-  let data: any = null;
+  let json: any = null;
   try {
-    data = text ? JSON.parse(text) : null;
+    json = text ? JSON.parse(text) : null;
   } catch {
-    data = text;
+    // ignore
   }
 
   if (!res.ok) {
-    const msg =
-      (data && (data.message || data.error)) ||
-      (typeof data === "string" ? data : "") ||
-      `Request failed: ${res.status}`;
-    throw new Error(msg);
+    const message =
+      json?.message ||
+      json?.error ||
+      text ||
+      `Request failed (${res.status})`;
+    throw new Error(message);
   }
 
-  return data;
+  return json;
 }
