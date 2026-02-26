@@ -24,11 +24,15 @@ export default function QrRouterPage() {
     }
 
     if (type === 'item') {
-      if (desk) {
-        router.replace(`/d/${desk}?add=${id}`);
-      } else {
-        router.replace(`/owner/menu?add=${id}`);
-      }
+      if (desk) router.replace(`/d/${desk}?add=${id}`);
+      else router.replace(`/owner/menu?add=${id}`);
+      return;
+    }
+
+    // Service QR: /q/service/print?tenant=<tenantId>
+    if (type === 'service') {
+      const tenant = sp.get('tenant') || '';
+      router.replace(`/checkout?service=${encodeURIComponent(id)}&tenant=${encodeURIComponent(tenant)}`);
       return;
     }
 
